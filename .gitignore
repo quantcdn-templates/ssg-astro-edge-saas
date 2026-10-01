@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.astro/
+.local/
+.env*
+.quant-revision
+.DS_Store
+.quant-functions.json
+test-results/
+playwright-report/
+
+# Local account-specific verification notes
+docs/local-e2e-*.md

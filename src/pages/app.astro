@@ -1,0 +1,410 @@
+---
+import Base from "../layouts/Base.astro";
+import Icon from "../components/Icon.astro";
+const isLocal = import.meta.env.DEV;
+---
+
+<Base title="Workspace" app>
+  <div id="login" class="login-screen">
+    <div class="login-story">
+      <img class="login-art" src="/orbit-system.svg" alt="" />
+      <a class="brand" href="/"
+        ><img src="/favicon.svg" width="36" height="36" alt="" />orbit</a
+      ><div>
+        <span class="eyebrow">LESS NOISE. MORE POSSIBILITY.</span><h1>
+          A little space.<br />For your next<br /><em>big thing.</em>
+        </h1><p>A calm place for everything you're moving forward.</p>
+      </div><span>Made for teams with good things ahead.</span>
+    </div>
+    <main id="main" class="login-panel">
+      <form id="login-form">
+        <span class="eyebrow">YOUR WORK, IN ORBIT</span><h2>Welcome back.</h2><p
+        >
+          Use your personal access key to open your workspace.
+        </p><label for="access-key">Access key</label><input
+          id="access-key"
+          name="accessKey"
+          type="password"
+          autocomplete="off"
+          required
+          minlength="64"
+          maxlength="64"
+          placeholder="Your personal workspace key"
+        /><p id="login-error" class="error" role="alert"></p><button
+          class="button primary"
+          type="submit">Open workspace <span aria-hidden="true">↗</span></button
+        ><p class="muted small">
+          Need access? Ask your workspace administrator.
+        </p>{
+          isLocal && (
+            <div class="local-demo">
+              <>
+                <strong>Explore the local demo</strong>
+                <p>
+                  Try a working workspace with sample projects. Changes stay on
+                  this computer.
+                </p>
+                <button type="button" id="demo-login" class="button">
+                  Enter demo workspace →
+                </button>
+              </>
+            </div>
+          )
+        }<a href="/">← Back to Orbit</a>
+      </form>
+    </main>
+  </div>
+  <div id="workspace" class="app-shell" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="/"
+        ><img src="/favicon.svg" width="32" height="32" alt="" />orbit<span
+          class="brand-dot">®</span
+        ></a
+      >
+      <div class="workspace-label">
+        <span class="workspace-label-caption">YOUR SPACE</span>
+        <span class="workspace-icon">S</span><div>
+          <strong id="workspace-name">My workspace</strong><small
+            >Team workspace · Orbit</small
+          >
+        </div>
+      </div>
+      <span class="nav-label">MISSION CONTROL</span>
+      <nav aria-label="Workspace">
+        <a href="#overview" data-view="overview"
+          ><Icon name="overview" />Overview</a
+        ><a href="#projects" data-view="projects"
+          ><Icon name="projects" />Projects <span class="count" id="nav-count"
+            >0</span
+          ></a
+        ><a href="#activity" data-view="activity"
+          ><Icon name="activity" />Activity</a
+        ><a href="#settings" data-view="settings"
+          ><Icon name="settings" />Settings</a
+        >
+      </nav>
+      <div class="sidebar-bottom">
+        <a class="guide-link" href="/guide"
+          ><span aria-hidden="true">↗</span> A little guidance<p>
+            Make yourself at home.<br />Read the field guide.
+          </p></a
+        ><div class="user-block">
+          <span class="avatar" id="user-avatar">A</span><div>
+            <strong id="user-name">Your account</strong><small id="user-role"
+              >Owner</small
+            >
+          </div><button id="logout" title="Sign out" aria-label="Sign out"
+            ><Icon name="logout" size={18} /></button
+          >
+        </div>
+      </div>
+    </aside>
+    <div class="app-body">
+      <header class="topbar">
+        <span
+          >Your workspace <span class="slash">/</span>
+          <strong id="breadcrumb">Overview</strong></span
+        ><div>
+          <time id="today-label"></time>
+          <span class="live-dot"></span><span id="save-state"
+            >Workspace connected</span
+          ><span class="top-avatar" id="top-avatar">A</span>
+        </div>
+      </header>
+      <main id="dashboard" tabindex="-1">
+        <div class="page-heading">
+          <div>
+            <span class="eyebrow" id="page-eyebrow"
+              >LET'S MAKE THINGS HAPPEN</span
+            ><h1 id="page-title">A little clarity for your day.</h1><p
+              id="page-description"
+            >
+              Here's what's moving in your workspace.
+            </p>
+          </div><button id="new-project" class="button primary"
+            ><Icon name="plus" size={17} /> New project</button
+          >
+        </div>
+        <div id="notice" role="status" class="notice" hidden></div><button
+          id="retry"
+          class="button"
+          hidden>Try again</button
+        >
+        <div id="loading" class="loading" role="status">
+          Opening your workspace…
+        </div>
+        <section id="overview-view" class="view" hidden>
+          <section class="welcome-banner">
+            <div class="welcome-copy">
+              <span class="eyebrow"
+                ><i class="tiny-star">✳</i> A LITTLE FOCUS. A LOT OF POSSIBILITY.</span
+              ><h2>Good work starts<br />with a little <em>space.</em></h2><p
+                id="welcome-summary"
+              >
+                Your ideas, your people, your next big thing. All in orbit.
+              </p><a href="#projects" class="banner-link"
+                >Explore your projects <Icon name="arrow" size={16} /></a>
+            </div>
+            <img class="banner-art" src="/orbit-system.svg" alt="" />
+            <span class="banner-coordinate"
+              >MADE FOR FORWARD MOTION <span>↗</span></span
+            >
+          </section>
+          <div class="section-kicker">
+            <span>THE BIG PICTURE</span><span class="scope-indicator"
+              ><i></i> Live workspace data</span>
+          </div>
+          <div class="stats">
+            <article>
+              <div class="stat-label">
+                <span>Total projects</span><Icon name="projects" size={18} />
+              </div><strong id="stat-total">0</strong><div class="stat-bottom">
+                <small>Ideas with a place to land</small><span
+                  class="stat-number">01</span>
+              </div>
+            </article>
+            <article>
+              <div class="stat-label">
+                <span>In progress</span><Icon name="activity" size={18} />
+              </div><strong id="stat-active">0</strong><div class="stat-bottom">
+                <small><i class="dot orange"></i>Moving things forward</small
+                ><span class="stat-number">02</span>
+              </div>
+            </article>
+            <article>
+              <div class="stat-label">
+                <span>Completed</span><Icon name="check" size={18} />
+              </div><strong id="stat-complete">0</strong><div
+                class="stat-bottom"
+              >
+                <small><i class="dot green"></i>Good work, delivered</small
+                ><span class="stat-number">03</span>
+              </div>
+            </article>
+            <article class="progress-stat">
+              <div class="stat-label">
+                <span>Overall progress</span><Icon name="circle" size={18} />
+              </div><strong id="stat-progress">0<small>%</small></strong><div
+                class="stat-bottom"
+              >
+                <small>Across non-archived projects</small><span
+                  class="stat-number">04</span>
+              </div><div class="stat-meter"><i id="overall-meter"></i></div>
+            </article>
+          </div>
+          <div class="overview-grid">
+            <section class="panel momentum">
+              <div class="panel-heading">
+                <div>
+                  <span class="eyebrow">SMALL STEPS, BIG THINGS</span><h2>
+                    Progress in perspective.
+                  </h2>
+                </div><span class="subtle-chip"
+                  ><i class="dot orange"></i>Latest projects</span>
+              </div>
+              <div class="chart-layout">
+                <div class="chart-axis" aria-hidden="true">
+                  <span>100%</span><span>75%</span><span>50%</span><span
+                    >25%</span
+                  ><span>0%</span>
+                </div><div id="progress-chart" class="progress-chart"></div>
+              </div>
+              <div class="chart-legend">
+                <span><i class="dot orange"></i>Active</span><span
+                  ><i class="dot green"></i>Complete</span
+                ><span><i class="dot grey"></i>Planned</span><small
+                  >Hover or focus a bar for details</small>
+              </div>
+            </section>
+            <section class="focus-card">
+              <div class="focus-heading">
+                <span class="eyebrow">NEXT ON THE HORIZON</span><Icon
+                  name="arrow"
+                  size={20}
+                />
+              </div><div class="focus-ring" id="focus-ring">
+                <svg viewBox="0 0 120 120" aria-hidden="true"
+                  ><circle cx="60" cy="60" r="51" class="ring-track"
+                  ></circle><circle
+                    cx="60"
+                    cy="60"
+                    r="51"
+                    class="ring-value"
+                    id="focus-ring-value"></circle></svg
+                ><div>
+                  <strong id="focus-percent">—</strong><span>COMPLETE</span>
+                </div>
+              </div><h2 id="focus-title">Make room for what's next.</h2><p
+                id="focus-copy"
+              >
+                Your next milestone is closer than you think.
+              </p><div class="focus-bottom">
+                <span id="focus-date" class="due-chip">Your next chapter</span
+                ><a href="#projects" aria-label="View projects"
+                  ><Icon name="arrow" size={20} /></a>
+              </div>
+            </section>
+          </div>
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <span class="eyebrow">WHERE THE WORK HAPPENS</span><h2>
+                  On your radar.
+                </h2>
+              </div><a href="#projects" class="text-link">View all projects ↗</a
+              >
+            </div><div id="overview-table"></div>
+          </section>
+          <p class="small muted" id="overview-scope"></p>
+        </section>
+        <section id="projects-view" class="view" hidden>
+          <div class="panel">
+            <div class="project-toolbar">
+              <label class="search"
+                ><span aria-hidden="true">⌕</span><input
+                  type="search"
+                  id="project-search"
+                  placeholder="Search projects or owners…"
+                  aria-label="Search projects or owners"
+                /></label
+              ><select id="status-filter" aria-label="Filter by status"
+                ><option value="all">All statuses</option><option value="active"
+                  >Active</option
+                ><option value="planned">Planned</option><option
+                  value="complete">Complete</option
+                ><option value="archived">Archived</option></select
+              ><span id="result-count" class="muted small"></span>
+            </div><div id="projects-table"></div><div class="load-row">
+              <button id="load-more" class="button" hidden
+                >Load more projects</button
+              ><span id="list-scope" class="small muted"></span>
+            </div>
+          </div>
+        </section>
+        <section id="activity-view" class="view" hidden>
+          <div class="panel">
+            <div class="panel-heading">
+              <div>
+                <h2>The latest moves</h2><p>
+                  Latest update to each loaded project, most recent first.
+                </p>
+              </div>
+            </div><div id="activity-list"></div>
+          </div>
+        </section>
+        <section id="settings-view" class="view" hidden>
+          <form id="settings-form" class="panel settings">
+            <h2>A space of your own</h2><p class="muted">
+              The details that make this workspace yours.
+            </p><label for="settings-name">Workspace name</label><input
+              id="settings-name"
+              name="name"
+              required
+              maxlength="60"
+            /><label for="settings-description">Description</label><textarea
+              id="settings-description"
+              name="description"
+              maxlength="240"
+              rows="3"></textarea><p
+              id="settings-error"
+              class="error"
+              role="alert"
+            >
+            </p><button class="button primary" type="submit"
+              >Save changes</button
+            ><p class="muted small" id="settings-access"></p>
+          </form>
+        </section>
+        <footer class="app-footer">
+          <span
+            >ORBIT <span class="footer-plus">✳</span> A little progress, every day.</span
+          ><a href="/guide">Need a hand? ↗</a>
+        </footer>
+      </main>
+    </div>
+  </div>
+  <dialog id="project-dialog">
+    <form id="project-form">
+      <div class="dialog-heading">
+        <div>
+          <span class="eyebrow">MAKE SOMETHING HAPPEN</span><h2
+            id="dialog-title"
+          >
+            New project
+          </h2>
+        </div><button
+          type="button"
+          class="icon-button"
+          id="close-dialog"
+          aria-label="Close dialog">×</button
+        >
+      </div><input type="hidden" name="id" /><label for="project-name"
+        >Project name</label
+      ><input
+        id="project-name"
+        name="name"
+        required
+        maxlength="100"
+        placeholder="Your next big thing"
+      /><label for="project-description">Description</label><textarea
+        id="project-description"
+        name="description"
+        maxlength="500"
+        rows="2"
+        placeholder="What are we working towards?"></textarea><div
+        class="form-grid"
+      >
+        <div>
+          <label for="project-owner">Owner</label><input
+            id="project-owner"
+            name="owner"
+            required
+            maxlength="60"
+          />
+        </div><div>
+          <label for="project-due">Target date</label><input
+            id="project-due"
+            name="due"
+            type="date"
+          />
+        </div><div>
+          <label for="project-status">Status</label><select
+            id="project-status"
+            name="status"
+            ><option value="planned">Planned</option><option value="active"
+              >Active</option
+            ><option value="complete">Complete</option><option value="archived"
+              >Archived</option
+            ></select
+          >
+        </div><div>
+          <label for="project-priority">Priority</label><select
+            id="project-priority"
+            name="priority"
+            ><option value="low">Low</option><option value="medium" selected
+              >Medium</option
+            ><option value="high">High</option></select
+          >
+        </div>
+      </div><label for="project-progress">Progress (%)</label><input
+        id="project-progress"
+        name="progress"
+        type="number"
+        min="0"
+        max="100"
+        step="1"
+        value="0"
+        required
+      /><p id="project-error" class="error" role="alert"></p><div
+        class="dialog-actions"
+      >
+        <button id="delete-project" class="button danger" type="button" hidden
+          >Delete project</button
+        ><button class="button primary" type="submit">Save project</button>
+      </div>
+    </form>
+  </dialog>
+  <script>
+    import "../scripts/app.js";
+  </script>
+</Base>

@@ -1,0 +1,20 @@
+{
+  "_components": {
+    "groups": [
+      {
+        "id": "content",
+        "label": "Content"
+      }
+    ],
+    "items": [
+      {
+        "path": "src/components/Callout.astro",
+        "group": "content",
+        "description": "A highlighted content note.",
+        "defaults": {
+          "title": "Good to know"
+        }
+      }
+    ]
+  }
+}

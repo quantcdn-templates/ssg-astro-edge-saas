@@ -1,0 +1,25 @@
+{
+  "name": "ssg-astro-edge-saas",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A complete workspace dashboard using Quant edge functions, KV and optional Studio content editing",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "test": "node --test tests/*.test.mjs",
+    "provision": "node scripts/provision.mjs",
+    "test:browser": "playwright test",
+    "prepare:deploy": "node scripts/deploy-manifest.mjs"
+  },
+  "dependencies": {
+    "astro": "7.3.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  }
+}

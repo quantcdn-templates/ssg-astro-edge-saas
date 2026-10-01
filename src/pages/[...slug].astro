@@ -1,0 +1,65 @@
+---
+import { getCollection, render } from "astro:content";
+import Base from "../layouts/Base.astro";
+export async function getStaticPaths() {
+  return (await getCollection("pages", ({ data }) => !data.draft)).map(
+    (page) => ({
+      params: { slug: page.id === "home" ? undefined : page.id },
+      props: { page },
+    }),
+  );
+}
+const { page } = Astro.props;
+const { Content } = await render(page);
+---
+
+<Base title={page.data.title} description={page.data.description}>
+  <header class="public-nav">
+    <a class="brand" href="/"
+      ><img src="/favicon.svg" alt="" width="32" height="32" />orbit<span
+        class="brand-dot">®</span
+      ></a
+    ><nav aria-label="Main">
+      <a href="/guide">Field guide</a><a class="button primary" href="/app"
+        >Open workspace <span aria-hidden="true">↗</span></a
+      >
+    </nav>
+  </header>
+  <main id="main" class="public-main">
+    <section class="hero">
+      <div class="hero-copy">
+        <span class="eyebrow">{page.data.eyebrow}</span><h1>
+          {page.data.title}
+        </h1><p>{page.data.description}</p><a
+          class="button primary"
+          href={page.data.ctaHref}
+          >{page.data.ctaLabel}<span aria-hidden="true">↗</span></a
+        ><span class="hero-note"
+          >A clear head. A shared direction. A little more possibility.</span>
+      </div>
+      <div class="hero-visual">
+        <img
+          src="/orbit-system.svg"
+          alt="An illustrated planet wrapped in delicate orbital paths"
+        /><div class="floating-note">
+          <span class="check-orbit" aria-hidden="true">✓</span><div>
+            <strong>Good things are taking shape.</strong><small
+              >A space to focus. A place to move forward.</small>
+          </div><span aria-hidden="true">✳</span>
+        </div><div class="hero-visual-caption">
+          <span>YOUR NEXT CHAPTER STARTS HERE</span><b aria-hidden="true">↗</b>
+        </div>
+      </div>
+    </section>
+    <div class="public-ribbon">
+      <strong>A LITTLE LESS FRICTION</strong><span>One shared workspace</span
+      ><span>Clearer priorities</span><span>Room for what’s next</span>
+    </div>
+    <article class="prose"><Content /></article>
+  </main>
+  <footer class="public-footer">
+    <a class="brand" href="/">orbit</a><span
+      >A little less busywork. A lot more progress.</span
+    ><a href="/guide">Field guide ↗</a>
+  </footer>
+</Base>

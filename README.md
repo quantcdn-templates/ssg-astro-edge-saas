@@ -1,0 +1,186 @@
+# Orbit · Edge SaaS template
+
+A working project-management dashboard built with a static Astro frontend, one Quant edge function and a Quant KV store. No application server, SQL database or external authentication service is required. Quant Studio is optional: use it to edit the public website's content through the portal.
+
+## Create your application
+
+Choose **Use this template → Create a new repository** on [GitHub](https://github.com/quantcdn-templates/ssg-astro-edge-saas/generate), or select **Orbit · Edge SaaS** in the Quant portal's Studio template picker. The template verifies its build without deployment credentials; configure your Quant project to enable deployment.
+
+The portal needs template KV provisioning support to create the store automatically. Function routing and the first personal access key still require the setup steps in **Deploy to Quant** below.
+
+## Run locally
+
+Requires Node 22.12+.
+
+```sh
+npm install
+npm run dev
+```
+
+Open the URL Astro prints and visit `/app`. Choose **Enter demo workspace** to explore eight sample projects. Create, edit, complete and delete projects, search/filter the list, review updates and change workspace settings. Reloading preserves your changes.
+
+The local Astro integration executes **the same `edge-functions/api.js` body** as production. Its filesystem KV adapter persists records in `.local/kv.json`, which is ignored by Git. It seeds only on the first run. Stop the dev server and remove that file to reset the demo. This adapter emulates the application's API contract, not the hosted service's consistency, latency or failure modes.
+
+`npm run preview` serves only the static production build; it does not start the development API. Use `npm run dev` for the complete local application. Demo credentials and the demo button are development-only and are absent from the production bundle. Production setup seeds workspace settings from `quant/meta.json`; it never seeds the local demo credentials or projects.
+
+## What is included
+
+- Responsive dashboard with project counts, progress chart and a next-milestone card.
+- Persistent project CRUD, search and status filters, ownership labels, priorities, target dates and progress.
+- Workspace isolation and personal owner/viewer access keys, enforced by the API.
+- Opaque eight-hour sessions in HttpOnly, Secure, SameSite=Strict cookies over HTTPS. Sessions are stored by hash, expire both in application code and through KV TTL, and are removed on sign-out.
+- Workspace settings and an activity view of the latest update to each project.
+- Public landing page and field guide backed by typed Astro content collections.
+- An API test suite, browser tests, local emulator, provisioning helper and GitHub deployment workflow.
+
+Owner labels on projects are descriptive names, not account assignments or invitations. Activity is a view of current records, not an immutable audit log. Billing, email, self-service registration and password recovery are extension points, not simulated features.
+
+## Architecture
+
+```text
+Browser ── GET /, /guide, /app ──> Quant static hosting (Astro dist/)
+        └─ /api/* ──────────────> Quant edge function
+                                  ├─ session / access checks
+                                  ├─ workspace-scoped project operations
+                                  └─ Quant KV store
+
+Quant Studio ── edits src/content/pages/*.md ──> static public pages
+```
+
+`/app` is a public **shell**. It contains no private data. Every private read and write goes through the authenticated API. API responses include `Cache-Control: private, no-store` and `Surrogate-Control: no-store`. Writes require a matching `Origin`; JSON bodies are limited to 8 KiB and validated on the server. Browser-rendered project text is escaped. Workspace IDs and roles come from the stored access record, never from user-supplied request fields.
+
+The function uses Quant's runtime `event.quantOrg`, `event.quantProject`, `event.request`, Web Crypto and `kvStore`. The store identifier is `${event.quantOrg}-${event.quantProject}-orbit`.
+
+### KV requirements
+
+The target runtime must support:
+
+```js
+await kvStore.get(store, key);
+await kvStore.set(store, key, object, { ttl: 28800 });
+await kvStore.delete(store, key);
+await kvStore.list(store, {
+  prefix: "workspace:studio:project:",
+  includeValues: true,
+  limit: 50,
+  // cursor: opaqueCursorFromPreviousPage,
+});
+// { items: [{ key, value, ... }], cursor, hasMore, scannedCount }
+```
+
+`list` requires the current **cursor-v1 KV query API**, as implemented in the Quant runtime. Older deployments with only get/set/delete must be upgraded before using this template. An unavailable query API returns a visible service error rather than an empty dashboard.
+
+Each project is an independent KV record. There is no shared read-modify-write project index, so concurrent creates cannot overwrite one another's index entries. Lists load 50 records at a time; **Load more projects** fetches the next page. Counts, search, charts and activity cover loaded records, and the UI explicitly identifies incomplete lists. Empty evaluated pages with a continuation cursor can still be advanced.
+
+Editing one project or workspace settings uses **last-write-wins**. KV provides no compare-and-swap/transaction in this template. Concurrent edits can overwrite each other; pagination is not a point-in-time snapshot. Use this starter for workloads that accept these semantics. Workflows requiring financial transactions, inventory guarantees or strict collaborative editing need a different consistency design.
+
+## Deploy to Quant
+
+1. Create the site through the portal’s template flow. With template KV provisioning installed, the portal creates and links `orbit`, waits for it to be ready, and inserts the initial workspace settings from `quant/meta.json` before starting the build. For a GitHub-only deployment or an older portal, create a Quant project and a KV store named `orbit` in **Compute → K/V Stores**. Verify the full identifier is `<organization>-<project>-orbit` and the store is available to the project's functions. If your identifier differs, update the `store` declaration in `edge-functions/api.js`.
+2. Create your repository from this GitHub template (the portal does this for you when using its template flow). For manual setup, set repository variables `QUANT_CUSTOMER` (organization slug) and `QUANT_PROJECT`, plus secret `QUANT_TOKEN` (deployment token).
+3. Push to `main` or run the deployment workflow. It tests, builds, deploys the static site and function, then purges the static cache. `scripts/deploy-manifest.mjs` derives a stable, project-specific UUID, so redeployments update the same function. Keep the `orbit-api-v1` identity string unchanged. To adopt an existing function, put its UUID in `edge-functions.json`; the script preserves explicit UUIDs.
+4. In the Quant portal, bind the deployed **[Orbit]** function to `/api/*` for **all request methods**. Ensure this rule precedes any catch-all/static fallback and no cache rule overrides its no-store response headers. The deployment manifest does not create this route. KV creation is performed by portal template setup; the GitHub Action alone does not provision storage.
+5. Provision a personal access record as below, then open `https://your-domain/app` and sign in. Use HTTPS. Configure Quant WAF request limits for `/api/session` appropriate to your traffic; the template does not implement a distributed login rate limiter.
+
+Use separate Quant projects/stores for staging and production. The deployment token is never sent to the browser or stored in the site's content. The generated manifest is ignored by Git; the checked-in source manifest is the input.
+
+Before launch, verify a deployed sign-in, project create/update/delete, sign-out, viewer restrictions, and a private API request without a cookie (it must return 401). Local tests cannot verify portal route bindings, runtime rollout or CDN cache rules.
+
+### Template KV declarations
+
+`quant/meta.json` now declares the store and its initial settings:
+
+```json
+"kv_stores": [
+  {
+    "name": "orbit",
+    "initial_values": [
+      {
+        "key": "workspace:studio:settings",
+        "value": {
+          "name": "My workspace",
+          "description": "A little space for our next big thing."
+        }
+      }
+    ]
+  }
+]
+```
+
+Store names are project-local: the portal expands `orbit` to `<organization>-<project>-orbit`. Values may be JSON objects, arrays, strings, numbers, booleans or null. Setup preserves existing values, checkpoints each seeded key, and skips seeding stores already linked to the project. It will not repopulate deleted defaults on a later deployment. A newly created store is linked only after its defaults are ready.
+
+Declarations contain **public defaults**, never real passwords or shared access keys. This template seeds only the `studio` workspace's name and description; create a personal key for that workspace below. An unlinked store with the same name is a setup conflict: link it through the portal, then retry to preserve its existing data. This also handles a lost create response without guessing whether an existing store is safe to initialise.
+
+No expression evaluation, file imports, generated credentials or value interpolation is performed. Initial values are limited to 100 across at most 10 stores, 16 KiB per value and 64 KiB for the complete declaration. The initializer is a setup workflow, not a data migration engine; do not edit a new store manually while its initialisation is in progress.
+
+### Provision access
+
+```sh
+npm run provision -- studio "Alex Morgan" owner
+npm run provision -- studio "Jamie Chen" viewer
+npm run provision -- another-team "Taylor Brooks" owner
+```
+
+Each invocation prints:
+
+- `accessKey`: a new cryptographically random 256-bit personal key. Share it securely with that person; it is displayed only in this command's output.
+- `key`: the KV key `auth:<sha256-of-access-key>`.
+- `value`: the JSON object to store at that key, with `workspace`, `name`, `role` and `active`.
+
+The helper **does not contact Quant or write production data**. Paste `key` and the `value` **object** into your production KV store using the portal. Do not store the complete output object, the plaintext access key, or a quoted/double-encoded JSON string. Workspace slugs use lowercase letters, digits and hyphens. People with the same slug share projects; different slugs are isolated. Missing workspace settings default to “My workspace” and can be changed by an owner.
+
+To revoke access, delete the `auth:...` record or set `active: false`. The API rechecks it on every authenticated request, including existing sessions. To rotate a key, provision a replacement and revoke the old record. Give every person their own key. This is a deliberate access-key authentication example; add an identity provider if you need email login, MFA or SSO.
+
+### Keys at rest
+
+| Key                                    | Value                                                   |
+| -------------------------------------- | ------------------------------------------------------- |
+| `auth:<SHA-256>`                       | Workspace, display name, role, active flag              |
+| `session:<SHA-256>`                    | Reference to access record, absolute expiry; 8-hour TTL |
+| `workspace:<slug>:settings`            | Name and description                                    |
+| `workspace:<slug>:project:<random-id>` | One project, timestamps and latest editor               |
+
+The function checks explicit `false` responses from KV mutations as failures and returns 503 rather than acknowledging an unsuccessful write. There is no automatic retry of project creation, which could duplicate an operation whose outcome is uncertain. Back up production KV data through your normal operational process; the repository and static deployment do not contain it.
+
+## Optional Quant Studio editing
+
+Connect the repository to Quant Studio in the portal. Studio reads `src/content.config.ts` to generate editing forms for the `pages` collection:
+
+- `src/content/pages/home.md` → `/`
+- `src/content/pages/guide.md` → `/guide`
+- Add another Markdown entry → a matching public route.
+
+Edit the title, description, eyebrow, CTA label/link, body and draft flag. Draft entries are excluded from static output. `quant.studio.json` registers an optional Callout component. There is no MDX dependency; the supplied pages use Markdown. The site declares English as its default locale, following the other Studio templates; translated route generation is not included.
+
+Studio edits public web content. It is not the editor for KV project records, private workspace settings or credentials. Use the application for project data and the KV portal for access provisioning. Static content publishing does not need to redeploy the API; function source changes use the repository's deployment workflow. No Studio account is needed to build or operate the dashboard.
+
+## Files to start with
+
+| File                           | Purpose                                      |
+| ------------------------------ | -------------------------------------------- |
+| `edge-functions/api.js`        | Complete hosted API function body            |
+| `src/pages/app.astro`          | Static application shell and forms           |
+| `src/scripts/app.js`           | API client, rendering and interaction        |
+| `src/styles/global.css`        | Public and dashboard styling                 |
+| `src/content.config.ts`        | Studio content schema                        |
+| `scripts/local-edge.mjs`       | Development bridge to the same edge function |
+| `scripts/kv.mjs`               | Persistent development KV adapter            |
+| `scripts/provision.mjs`        | Generates personal access records            |
+| `.github/workflows/deploy.yml` | Tests, build, function/static deployment     |
+
+## Verification
+
+```sh
+npm test
+npm run build
+
+# With npm run dev running in another terminal:
+npx playwright install chromium
+BASE_URL=http://localhost:4321 npm run test:browser
+```
+
+Set `BASE_URL` to the actual development URL printed by Astro. Browser tests expect a freshly seeded local store with eight projects and restore their changes on success. They cover desktop/mobile layouts, authentication, persisted CRUD, settings, filtering, HTML escaping and failed-save recovery. Screenshots go to `.local/screenshots/`. API tests cover isolation, roles, expiry/revocation, CSRF origin checks, validation, pagination, concurrent creates and storage failures.
+
+The workflow runs API tests and a production build on pushes to `main`, pull requests, and manual runs. Deployment runs only when the Quant variables and token are configured, and is skipped for pull requests or commits containing `[skip deploy]`. Browser tests are a local verification step. Fonts are loaded from Google Fonts with system fallbacks; self-host them if needed.
+
+References: [Quant edge functions](https://docs.quantcdn.io/compute/functions), [KV stores](https://docs.quantcdn.io/compute/kv-stores/), [deploy action](https://github.com/quantcdn/deploy-action). The local `mc-ai/site` examples informed the function-body and deployment conventions; the newer runtime's cursor API replaces their best-effort shared index.

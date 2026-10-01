@@ -1,0 +1,7 @@
+[
+  {
+    "type": "function",
+    "path": "./edge-functions/api.js",
+    "description": "[Orbit] Workspace sessions, projects and settings. Bind to /api/*."
+  }
+]
