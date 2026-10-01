@@ -360,3 +360,23 @@ test("empty evaluated pages preserve pagination metadata", async () => {
     hasMore: true,
   });
 });
+
+test("uses Quant's public URL for origin checks behind the edge proxy", async () => {
+  const kv = await createKV();
+  await kv.set(store, `auth:${digest(ownerKey)}`, {
+    name: "Alex", workspace: "alpha", role: "owner", active: true,
+  });
+  const call = (origin) => run({
+    quantOrg: "test", quantProject: "project",
+    url: new URL("https://orbit.test/fn/12345678-1234-4234-a234-123456789012"),
+    request: new Request("https://internal.edge.test/api/session", {
+      method: "POST", headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ accessKey: ownerKey }),
+    }),
+  }, kv);
+  const response = await call("https://orbit.test");
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("set-cookie"), /__Host-orbit=.*; Secure$/);
+  assert.equal((await call("https://foreign.test")).status, 403);
+  assert.equal((await call("https://internal.edge.test")).status, 403);
+});

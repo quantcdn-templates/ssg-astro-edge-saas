@@ -1,7 +1,14 @@
 // Quant function body: event and kvStore are provided by the runtime.
 // No Node imports, server process, or build-time credentials.
 const request = event.request;
+// Keep the original request path: Quant may rewrite event.url to /fn/<uuid>.
+// Its host/protocol identify the public origin rather than the internal backend.
 const url = new URL(request.url);
+if (event.url) {
+  const publicUrl = new URL(event.url);
+  url.protocol = publicUrl.protocol;
+  url.host = publicUrl.host;
+}
 const store = `${event.quantOrg}-${event.quantProject}-orbit`;
 const secure = url.protocol === "https:";
 const cookieName = secure ? "__Host-orbit" : "orbit-local";

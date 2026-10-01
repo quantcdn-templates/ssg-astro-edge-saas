@@ -11,3 +11,5 @@ playwright-report/
 
 # Local account-specific verification notes
 docs/local-e2e-*.md
+
+quant.json

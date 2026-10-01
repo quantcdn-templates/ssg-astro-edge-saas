@@ -6,7 +6,7 @@ A working project-management dashboard built with a static Astro frontend, one Q
 
 Choose **Use this template → Create a new repository** on [GitHub](https://github.com/quantcdn-templates/ssg-astro-edge-saas/generate), or select **Orbit · Edge SaaS** in the Quant portal's Studio template picker. The template verifies its build without deployment credentials; configure your Quant project to enable deployment.
 
-The portal needs template KV provisioning support to create the store automatically. Function routing and the first personal access key still require the setup steps in **Deploy to Quant** below.
+The portal needs template KV provisioning support to create the store automatically. This template includes `edge-rules.json` for declarative API routing. The published workflow retains its released action until the rules-capable portal, CLI and action are released together; use the routing setup below in the meantime. Personal access keys are always provisioned separately.
 
 ## Run locally
 
@@ -49,7 +49,7 @@ Quant Studio ── edits src/content/pages/*.md ──> static public pages
 
 `/app` is a public **shell**. It contains no private data. Every private read and write goes through the authenticated API. API responses include `Cache-Control: private, no-store` and `Surrogate-Control: no-store`. Writes require a matching `Origin`; JSON bodies are limited to 8 KiB and validated on the server. Browser-rendered project text is escaped. Workspace IDs and roles come from the stored access record, never from user-supplied request fields.
 
-The function uses Quant's runtime `event.quantOrg`, `event.quantProject`, `event.request`, Web Crypto and `kvStore`. The store identifier is `${event.quantOrg}-${event.quantProject}-orbit`.
+The function uses Quant's runtime `event.quantOrg`, `event.quantProject`, `event.request`, `event.url`, Web Crypto and `kvStore`. The store identifier is `${event.quantOrg}-${event.quantProject}-orbit`.
 
 ### KV requirements
 
@@ -79,12 +79,48 @@ Editing one project or workspace settings uses **last-write-wins**. KV provides 
 1. Create the site through the portal’s template flow. With template KV provisioning installed, the portal creates and links `orbit`, waits for it to be ready, and inserts the initial workspace settings from `quant/meta.json` before starting the build. For a GitHub-only deployment or an older portal, create a Quant project and a KV store named `orbit` in **Compute → K/V Stores**. Verify the full identifier is `<organization>-<project>-orbit` and the store is available to the project's functions. If your identifier differs, update the `store` declaration in `edge-functions/api.js`.
 2. Create your repository from this GitHub template (the portal does this for you when using its template flow). For manual setup, set repository variables `QUANT_CUSTOMER` (organization slug) and `QUANT_PROJECT`, plus secret `QUANT_TOKEN` (deployment token).
 3. Push to `main` or run the deployment workflow. It tests, builds, deploys the static site and function, then purges the static cache. `scripts/deploy-manifest.mjs` derives a stable, project-specific UUID, so redeployments update the same function. Keep the `orbit-api-v1` identity string unchanged. To adopt an existing function, put its UUID in `edge-functions.json`; the script preserves explicit UUIDs.
-4. In the Quant portal, bind the deployed **[Orbit]** function to `/api/*` for **all request methods**. Ensure this rule precedes any catch-all/static fallback and no cache rule overrides its no-store response headers. The deployment manifest does not create this route. KV creation is performed by portal template setup; the GitHub Action alone does not provision storage.
+4. In the Quant portal, bind the deployed **[Orbit]** function to `/api/*` for **all request methods**. Ensure this rule precedes any catch-all/static fallback and no cache rule overrides its no-store response headers. Alternatively, with the new rules-capable portal and CLI 6.3.0, apply `edge-rules.json` using the separate project-scoped API token as described below. KV creation is performed by portal template setup; the GitHub Action alone does not provision storage.
 5. Provision a personal access record as below, then open `https://your-domain/app` and sign in. Use HTTPS. Configure Quant WAF request limits for `/api/session` appropriate to your traffic; the template does not implement a distributed login rate limiter.
 
 Use separate Quant projects/stores for staging and production. The deployment token is never sent to the browser or stored in the site's content. The generated manifest is ignored by Git; the checked-in source manifest is the input.
 
 Before launch, verify a deployed sign-in, project create/update/delete, sign-out, viewer restrictions, and a private API request without a cookie (it must return 401). Local tests cannot verify portal route bindings, runtime rollout or CDN cache rules.
+
+### Declarative rules and separate deployment credentials
+
+`edge-functions.json` gives the API function the stable ID `orbit-api-v1`.
+`edge-rules.json` references that ID and routes all methods under `/api/*` to it.
+The CLI resolves the reference to the same project-specific UUID used for uploads.
+
+The rules-capable static/Studio setup detects this file and injects:
+
+- `QUANT_TOKEN`: existing content/function upload secret.
+- `QUANT_API_TOKEN`: separate token restricted to this project, with
+  `projects:read`, `rules:read`, and `rules:write` scopes.
+- `QUANT_BASE_URL`: the owning portal's `/api/v2` URL, selected for the platform
+  and staging/production environment, independently of `QUANT_ENDPOINT`.
+
+With CLI 6.3.0 and the new portal endpoint available:
+
+```sh
+# Set QUANT_API_TOKEN and QUANT_BASE_URL in your environment.
+quant rules edge-rules.json --functions .quant-functions.json -c CUSTOMER -p PROJECT --dry-run
+quant rules edge-rules.json --functions .quant-functions.json -c CUSTOMER -p PROJECT
+```
+
+Rules deployment never accepts the upload token as a fallback. Repeated deploys
+update the same managed rule and preserve unrelated rules. Removing an entry
+from the file does not delete it; set `disabled: true` explicitly.
+Authentication and filter functions use the same format with `type: "auth"` or
+`type: "filter"`; give authentication rules lower weights than protected API rules.
+Orbit itself performs authentication inside its API function.
+
+[The prepared workflow](docs/deploy-rules-workflow.yml) shows the full action
+integration for the next release. Activate it only after the portal endpoint,
+CLI 6.3.0 Docker image and corresponding action tag are available. Portal-issued
+template API tokens expire after one year; rotate the token and replace the
+GitHub secret before expiry. A token issued by a local portal database cannot
+be used against the shared staging portal.
 
 ### Template KV declarations
 
