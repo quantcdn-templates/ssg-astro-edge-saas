@@ -41,7 +41,7 @@ jobs:
           path: .quant-revision
           key: quant-revision-${{ github.ref }}-${{ github.run_id }}
           restore-keys: quant-revision-${{ github.ref }}-
-      - uses: quantcdn/deploy-action@d25293fb60ff35d9f722e53db884bb4f5d6522ad # v6.1.0
+      - uses: quantcdn/deploy-action@721bcb14a78db721cb0e044f0e1c6a2a554b47f2 # v6.2.0
         if: env.DEPLOY_CONFIGURED == 'true'
         with:
           customer: ${{ vars.QUANT_CUSTOMER }}
@@ -50,6 +50,11 @@ jobs:
           dir: dist
           functions: .quant-functions.json
           revision-log: .quant-revision
+          # Managed rules (edge-rules.json) deploy only when the portal injected the
+          # separate project-scoped rules token; a manual setup without it is unchanged.
+          rules: ${{ secrets.QUANT_API_TOKEN != '' && vars.QUANT_BASE_URL != '' && 'edge-rules.json' || '' }}
+          api-token: ${{ secrets.QUANT_API_TOKEN }}
+          api-base-url: ${{ vars.QUANT_BASE_URL }}
       - uses: quantcdn/purge-action@9bab37759d3cd137b5982706b20aad785a13b229 # v6.0.1
         if: env.DEPLOY_CONFIGURED == 'true'
         with:
