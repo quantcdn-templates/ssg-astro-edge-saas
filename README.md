@@ -6,7 +6,7 @@ A working project-management dashboard built with a static Astro frontend, one Q
 
 Choose **Use this template → Create a new repository** on [GitHub](https://github.com/quantcdn-templates/ssg-astro-edge-saas/generate), or select **Orbit · Edge SaaS** in the Quant portal's Studio template picker. The template verifies its build without deployment credentials; configure your Quant project to enable deployment.
 
-The portal needs template KV provisioning support to create the store automatically. This template includes `edge-rules.json` for declarative API routing. The published workflow retains its released action until the rules-capable portal, CLI and action are released together; use the routing setup below in the meantime. Personal access keys are always provisioned separately.
+The portal creates the KV store and the separate rules token when it sets the site up. This template includes `edge-rules.json` for declarative API routing; the workflow applies it on every deploy when the rules token is present. Personal access keys are always provisioned separately.
 
 ## Run locally
 
@@ -79,7 +79,7 @@ Editing one project or workspace settings uses **last-write-wins**. KV provides 
 1. Create the site through the portal’s template flow. With template KV provisioning installed, the portal creates and links `orbit`, waits for it to be ready, and inserts the initial workspace settings from `quant/meta.json` before starting the build. For a GitHub-only deployment or an older portal, create a Quant project and a KV store named `orbit` in **Compute → K/V Stores**. Verify the full identifier is `<organization>-<project>-orbit` and the store is available to the project's functions. If your identifier differs, update the `store` declaration in `edge-functions/api.js`.
 2. Create your repository from this GitHub template (the portal does this for you when using its template flow). For manual setup, set repository variables `QUANT_CUSTOMER` (organization slug) and `QUANT_PROJECT`, plus secret `QUANT_TOKEN` (deployment token).
 3. Push to `main` or run the deployment workflow. It tests, builds, deploys the static site and function, then purges the static cache. `scripts/deploy-manifest.mjs` derives a stable, project-specific UUID, so redeployments update the same function. Keep the `orbit-api-v1` identity string unchanged. To adopt an existing function, put its UUID in `edge-functions.json`; the script preserves explicit UUIDs.
-4. In the Quant portal, bind the deployed **[Orbit]** function to `/api/*` for **all request methods**. Ensure this rule precedes any catch-all/static fallback and no cache rule overrides its no-store response headers. Alternatively, with the new rules-capable portal and CLI 6.3.0, apply `edge-rules.json` using the separate project-scoped API token as described below. KV creation is performed by portal template setup; the GitHub Action alone does not provision storage.
+4. Sites created through the portal get the `/api/*` rule from `edge-rules.json` automatically on each deploy (see below). For a manual setup without the rules token, bind the deployed **[Orbit]** function to `/api/*` for **all request methods** in the Quant portal instead; ensure the rule precedes any catch-all/static fallback and no cache rule overrides its no-store response headers. KV creation is performed by portal template setup; the GitHub Action alone does not provision storage.
 5. Provision a personal access record as below, then open `https://your-domain/app` and sign in. Use HTTPS. Configure Quant WAF request limits for `/api/session` appropriate to your traffic; the template does not implement a distributed login rate limiter.
 
 Use separate Quant projects/stores for staging and production. The deployment token is never sent to the browser or stored in the site's content. The generated manifest is ignored by Git; the checked-in source manifest is the input.
@@ -100,7 +100,8 @@ The rules-capable static/Studio setup detects this file and injects:
 - `QUANT_BASE_URL`: the owning portal's `/api/v2` URL, selected for the platform
   and staging/production environment, independently of `QUANT_ENDPOINT`.
 
-With CLI 6.3.0 and the new portal endpoint available:
+The deploy workflow applies `edge-rules.json` after the site and function upload
+whenever `QUANT_API_TOKEN` and `QUANT_BASE_URL` are set. To run it by hand:
 
 ```sh
 # Set QUANT_API_TOKEN and QUANT_BASE_URL in your environment.
@@ -109,7 +110,11 @@ quant rules edge-rules.json --functions .quant-functions.json -c CUSTOMER -p PRO
 ```
 
 Rules deployment never accepts the upload token as a fallback. Repeated deploys
-update the same managed rule and preserve unrelated rules. Removing an entry
+update the same managed rule and preserve unrelated rules. Rules deployed this
+way are managed in code: the portal shows them read-only. If one is changed
+outside code, the deploy stops before uploading and lists the changed fields;
+re-run the workflow with `rules-force: true` on the deploy step (or
+`quant rules ... --force`) to restore the version in `edge-rules.json`. Removing an entry
 from the file does not delete it; set `disabled: true` explicitly.
 Authentication and filter functions use the same format with `type: "auth"` or
 `type: "filter"`; give authentication rules lower weights than protected API rules.
