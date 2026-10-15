@@ -79,8 +79,8 @@ Editing one project or workspace settings uses **last-write-wins**. KV provides 
 1. Create the site through the portal’s template flow. With template KV provisioning installed, the portal creates and links `orbit`, waits for it to be ready, and inserts the initial workspace settings from `quant/meta.json` before starting the build. For a GitHub-only deployment or an older portal, create a Quant project and a KV store named `orbit` in **Compute → K/V Stores**. Verify the full identifier is `<organization>-<project>-orbit` and the store is available to the project's functions. If your identifier differs, update the `store` declaration in `quant/edge-functions/api.js`.
 2. Create your repository from this GitHub template (the portal does this for you when using its template flow). For manual setup, set repository variables `QUANT_CUSTOMER` (organization slug) and `QUANT_PROJECT`, plus secret `QUANT_TOKEN` (deployment token).
 3. Push to `main` or run the deployment workflow. It tests, builds, deploys the static site and function, then purges the static cache. The function's identity is the `uuid` committed in `quant/edge-functions.json`, so every deploy updates the same function. Function UUIDs are scoped to a project, so every site created from this template can keep the same value. Do not change it after the first deploy. To adopt an existing function, replace it with that function's UUID.
-4. Sites created through the portal get the `/api/*` rule from `quant/edge-rules.json` automatically on each deploy (see below). For a manual setup without the rules token, bind the deployed **[Orbit]** function to `/api/*` for **all request methods** in the Quant portal instead; ensure the rule precedes any catch-all/static fallback and no cache rule overrides its no-store response headers. KV creation is performed by portal template setup; the GitHub Action alone does not provision storage.
-5. Provision a personal access record as below, then open `https://your-domain/app` and sign in. Use HTTPS. Configure Quant WAF request limits for `/api/session` appropriate to your traffic; the template does not implement a distributed login rate limiter.
+4. Sites created through the portal get the `/api/*` rule from `quant/edge-rules.json` automatically, both on every GitHub deploy and on every Quant Studio publish (see below). For a manual setup without the rules token, bind the deployed **[Orbit]** function to `/api/*` for **all request methods** in the Quant portal instead; ensure the rule precedes any catch-all/static fallback and no cache rule overrides its no-store response headers. KV creation is performed by portal template setup; the GitHub Action alone does not provision storage.
+5. Copy the **owner access key** from the setup screen. The portal generates it during setup and shows it once; it stores only its hash. Open `https://your-domain/app` and sign in with it. If you set the site up without the portal, or lose the key, follow [Reset or add access keys](#reset-or-add-access-keys). Use HTTPS. Configure Quant WAF request limits for `/api/session` appropriate to your traffic; the template does not implement a distributed login rate limiter.
 
 Use separate Quant projects/stores for staging and production. The deployment token is never sent to the browser or stored in the site's content.
 
@@ -101,7 +101,10 @@ The rules-capable static/Studio setup detects this file and injects:
   and staging/production environment, independently of `QUANT_ENDPOINT`.
 
 The deploy workflow applies `quant/edge-rules.json` after the site and function upload
-whenever `QUANT_API_TOKEN` and `QUANT_BASE_URL` are set. To run it by hand:
+whenever `QUANT_API_TOKEN` and `QUANT_BASE_URL` are set. A Quant Studio publish
+applies the same file after it deploys the function, when the person publishing
+can manage the project (`add_projects`); otherwise Studio reports the rules as
+skipped. Both paths update the same managed rule. To run it by hand:
 
 ```sh
 # Set QUANT_API_TOKEN and QUANT_BASE_URL in your environment.
@@ -127,7 +130,7 @@ be used against the shared staging portal.
 
 ### Template KV declarations
 
-`quant/meta.json` now declares the store and its initial settings:
+`quant/meta.json` declares the store and what setup puts in it:
 
 ```json
 "kv_stores": [
@@ -136,10 +139,12 @@ be used against the shared staging portal.
     "initial_values": [
       {
         "key": "workspace:studio:settings",
-        "value": {
-          "name": "My workspace",
-          "description": "A little space for our next big thing."
-        }
+        "value": { "name": "My workspace", "description": "A little space for our next big thing." }
+      },
+      {
+        "key": "auth:{sha256}",
+        "generate": { "bytes": 32, "reveal": "once", "label": "Owner access key (workspace: studio)" },
+        "value": { "workspace": "studio", "name": "{user_name}", "role": "owner", "active": true }
       }
     ]
   }
@@ -148,11 +153,13 @@ be used against the shared staging portal.
 
 Store names are project-local: the portal expands `orbit` to `<organization>-<project>-orbit`. Values may be JSON objects, arrays, strings, numbers, booleans or null. Setup preserves existing values, checkpoints each seeded key, and skips seeding stores already linked to the project. It will not repopulate deleted defaults on a later deployment. A newly created store is linked only after its defaults are ready.
 
-Declarations contain **public defaults**, never real passwords or shared access keys. This template seeds only the `studio` workspace's name and description; create a personal key for that workspace below. An unlinked store with the same name is a setup conflict: link it through the portal, then retry to preserve its existing data. This also handles a lost create response without guessing whether an existing store is safe to initialise.
+The second entry is the owner access key. Setup generates 32 random bytes (the 64-character hex key the API expects), stores the access record under `auth:` plus the SHA-256 of that key, fills `{user_name}` with the name of the person creating the site, and shows the key once on the setup screen. The plaintext key is never stored in KV, in the repository or in deployment records. A retry of a finished setup never creates a second key.
 
-No expression evaluation, file imports, generated credentials or value interpolation is performed. Initial values are limited to 100 across at most 10 stores, 16 KiB per value and 64 KiB for the complete declaration. The initializer is a setup workflow, not a data migration engine; do not edit a new store manually while its initialisation is in progress.
+Declarations contain public defaults only. An unlinked store with the same name is a setup conflict: link it through the portal, then retry to preserve its existing data. Initial values are limited to 100 across at most 10 stores, 16 KiB per value and 64 KiB for the complete declaration. The initializer is a setup workflow, not a data migration engine; do not edit a new store manually while its initialisation is in progress.
 
-### Provision access
+### Reset or add access keys
+
+Use this when the owner key is lost, someone leaves, or you add a person. Run it locally; it never contacts Quant:
 
 ```sh
 npm run provision -- studio "Alex Morgan" owner
@@ -162,13 +169,16 @@ npm run provision -- another-team "Taylor Brooks" owner
 
 Each invocation prints:
 
-- `accessKey`: a new cryptographically random 256-bit personal key. Share it securely with that person; it is displayed only in this command's output.
-- `key`: the KV key `auth:<sha256-of-access-key>`.
-- `value`: the JSON object to store at that key, with `workspace`, `name`, `role` and `active`.
+- `accessKey`: a new random 256-bit personal key. Give it to that person securely. It is shown only in this output.
+- `key`: the KV key, `auth:<sha256-of-access-key>`.
+- `value`: the JSON object to store at that key.
 
-The helper **does not contact Quant or write production data**. Paste `key` and the `value` **object** into your production KV store using the portal. Do not store the complete output object, the plaintext access key, or a quoted/double-encoded JSON string. Workspace slugs use lowercase letters, digits and hyphens. People with the same slug share projects; different slugs are isolated. Missing workspace settings default to “My workspace” and can be changed by an owner.
+Then, in the portal, open **Compute → K/V Stores → `<organization>-<project>-orbit`**:
 
-To revoke access, delete the `auth:...` record or set `active: false`. The API rechecks it on every authenticated request, including existing sessions. To rotate a key, provision a replacement and revoke the old record. Give every person their own key. This is a deliberate access-key authentication example; add an identity provider if you need email login, MFA or SSO.
+1. **Add** a key: paste `key` as the key and the `value` **object** as the value. Do not store the plaintext access key, the whole output, or a quoted JSON string.
+2. **To reset a lost key:** add the new record as above, sign in with the new key, then find the old `auth:...` record (its value names the person) and delete it, or set `"active": false`.
+
+The API rechecks the access record on every request, so deleting or deactivating it signs out existing sessions immediately. Workspace slugs use lowercase letters, digits and hyphens. People with the same slug share projects; different slugs are isolated. Give every person their own key. This is a deliberate access-key authentication example; add an identity provider if you need email login, MFA or SSO.
 
 ### Keys at rest
 

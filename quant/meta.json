@@ -26,6 +26,20 @@
             "name": "My workspace",
             "description": "A little space for our next big thing."
           }
+        },
+        {
+          "key": "auth:{sha256}",
+          "generate": {
+            "bytes": 32,
+            "reveal": "once",
+            "label": "Owner access key (workspace: studio)"
+          },
+          "value": {
+            "workspace": "studio",
+            "name": "{user_name}",
+            "role": "owner",
+            "active": true
+          }
         }
       ]
     }
