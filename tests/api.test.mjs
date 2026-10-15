@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createKV, digest } from "../scripts/kv.mjs";
 const source = await readFile(
-  new URL("../edge-functions/api.js", import.meta.url),
+  new URL("../quant/edge-functions/api.js", import.meta.url),
   "utf8",
 );
 const run = new (Object.getPrototypeOf(async function () {}).constructor)(

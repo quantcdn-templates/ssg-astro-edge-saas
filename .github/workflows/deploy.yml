@@ -26,15 +26,11 @@ jobs:
       - name: Deployment setup
         if: env.DEPLOY_CONFIGURED != 'true'
         run: echo 'Build verified. Deployment requires QUANT_CUSTOMER and QUANT_PROJECT variables and a QUANT_TOKEN secret; pull requests and [skip deploy] commits only verify the build.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Prepare stable function ID and Quant 404 route
+      - name: Prepare the Quant 404 route
         if: env.DEPLOY_CONFIGURED == 'true'
         run: |
-          node scripts/deploy-manifest.mjs
           mkdir -p dist/_quant404
           cp dist/404.html dist/_quant404/index.html
-        env:
-          QUANT_CUSTOMER: ${{ vars.QUANT_CUSTOMER }}
-          QUANT_PROJECT: ${{ vars.QUANT_PROJECT }}
       - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         if: env.DEPLOY_CONFIGURED == 'true'
         with:
@@ -48,11 +44,11 @@ jobs:
           project: ${{ vars.QUANT_PROJECT }}
           token: ${{ secrets.QUANT_TOKEN }}
           dir: dist
-          functions: .quant-functions.json
+          functions: quant/edge-functions.json
           revision-log: .quant-revision
-          # Managed rules (edge-rules.json) deploy only when the portal injected the
+          # Managed rules (quant/edge-rules.json) deploy only when the portal injected the
           # separate project-scoped rules token; a manual setup without it is unchanged.
-          rules: ${{ secrets.QUANT_API_TOKEN != '' && vars.QUANT_BASE_URL != '' && 'edge-rules.json' || '' }}
+          rules: ${{ secrets.QUANT_API_TOKEN != '' && vars.QUANT_BASE_URL != '' && 'quant/edge-rules.json' || '' }}
           api-token: ${{ secrets.QUANT_API_TOKEN }}
           api-base-url: ${{ vars.QUANT_BASE_URL }}
       - uses: quantcdn/purge-action@9bab37759d3cd137b5982706b20aad785a13b229 # v6.0.1

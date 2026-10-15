@@ -33,7 +33,7 @@ export function localEdge() {
                         ...(body ? { duplex: "half" } : {}),
                       });
                       const source = await readFile(
-                        new URL("../edge-functions/api.js", import.meta.url),
+                        new URL("../quant/edge-functions/api.js", import.meta.url),
                         "utf8",
                       );
                       const response = await new AsyncFunction(

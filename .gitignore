@@ -5,7 +5,6 @@ dist/
 .env*
 .quant-revision
 .DS_Store
-.quant-functions.json
 test-results/
 playwright-report/
 
