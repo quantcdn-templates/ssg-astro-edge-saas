@@ -19,6 +19,27 @@
   "kv_stores": [
     {
       "name": "orbit",
+      "indexes": [
+        {
+          "name": "projectsByStatus",
+          "collection": "workspace:*:project",
+          "fields": ["workspace", "status"],
+          "sortBy": "updatedAt",
+          "count": true
+        },
+        {
+          "name": "projectsByOwner",
+          "collection": "workspace:*:project",
+          "fields": ["workspace", "ownerKey"],
+          "sortBy": "updatedAt"
+        },
+        {
+          "name": "projectNames",
+          "collection": "workspace:*:project",
+          "fields": ["workspace", "nameKey"],
+          "unique": true
+        }
+      ],
       "initial_values": [
         {
           "key": "workspace:studio:settings",

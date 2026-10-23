@@ -17,23 +17,23 @@ npm install
 npm run dev
 ```
 
-Open the URL Astro prints and visit `/app`. Choose **Enter demo workspace** to explore eight sample projects. Create, edit, complete and delete projects, search/filter the list, review updates and change workspace settings. Reloading preserves your changes.
+Open the URL Astro prints and visit `/app`. Choose **Enter demo workspace** to explore eight sample projects. Create, edit, complete and delete projects, filter the list by status and owner, review the activity feed and change workspace settings. Reloading preserves your changes.
 
-The local Astro integration executes **the same `quant/edge-functions/api.js` body** as production. Its filesystem KV adapter persists records in `.local/kv.json`, which is ignored by Git. It seeds only on the first run. Stop the dev server and remove that file to reset the demo. This adapter emulates the application's API contract, not the hosted service's consistency, latency or failure modes.
+The local Astro integration executes **the same `quant/edge-functions/api.js` body** as production. Its filesystem KV adapter persists records in `.local/kv.json`, which is ignored by Git. It seeds only on the first run. Stop the dev server and remove that file to reset the demo. The adapter reads the indexes from `quant/meta.json` and emulates the KV v2 contract that Orbit uses (see [Local emulator limits](#local-emulator-limits)), not the hosted service's latency or failure modes.
 
 `npm run preview` serves only the static production build; it does not start the development API. Use `npm run dev` for the complete local application. Demo credentials and the demo button are development-only and are absent from the production bundle. Production setup seeds workspace settings from `quant/meta.json`; it never seeds the local demo credentials or projects.
 
 ## What is included
 
-- Responsive dashboard with project counts, progress chart and a next-milestone card.
-- Persistent project CRUD, search and status filters, ownership labels, priorities, target dates and progress.
+- Responsive dashboard with project counts from a KV count index, a progress chart and a next-milestone card.
+- Persistent project CRUD with version checks, status and owner filters served by KV indexes, search, ownership labels, priorities, target dates and progress.
 - Workspace isolation and personal owner/viewer access keys, enforced by the API.
 - Opaque eight-hour sessions in HttpOnly, Secure, SameSite=Strict cookies over HTTPS. Sessions are stored by hash, expire both in application code and through KV TTL, and are removed on sign-out.
-- Workspace settings and an activity view of the latest update to each project.
+- Workspace settings and an activity feed: one entry for each create, update and delete, kept for 90 days.
 - Public landing page and field guide backed by typed Astro content collections.
 - An API test suite, browser tests, local emulator, provisioning helper and GitHub deployment workflow.
 
-Owner labels on projects are descriptive names, not account assignments or invitations. Activity is a view of current records, not an immutable audit log. Billing, email, self-service registration and password recovery are extension points, not simulated features.
+Owner labels on projects are descriptive names, not account assignments or invitations. Activity entries are written in the same transaction as the change, but they expire after 90 days and are not an immutable audit log. Billing, email, self-service registration and password recovery are extension points, not simulated features.
 
 ## Architecture
 
@@ -53,30 +53,154 @@ The function uses Quant's runtime `event.quantOrg`, `event.quantProject`, `event
 
 ### KV requirements
 
-The target runtime must support:
+The `orbit` store is a **format 2 (KV v2)** store. The function uses these runtime calls:
 
 ```js
 await kvStore.get(store, key);
-await kvStore.set(store, key, object, { ttl: 28800 });
-await kvStore.delete(store, key);
-await kvStore.list(store, {
-  prefix: "workspace:studio:project:",
-  includeValues: true,
-  limit: 50,
-  // cursor: opaqueCursorFromPreviousPage,
-});
-// { items: [{ key, value, ... }], cursor, hasMore, scannedCount }
+await kvStore.getEntry(store, key); // { value, version }
+await kvStore.set(store, key, value, { ifAbsent: true }); // or { ifVersion }
+await kvStore.list(store, { collection, reverse, cursor, includeValues, limit });
+await kvStore.list(store, { index, equals, where, reverse, cursor, includeValues, limit });
+await kvStore.count(store, { index, equals });
+await kvStore
+  .atomic(store)
+  .set(projectKey, project, { ifVersion })
+  .set(activityKey, entry, { ttl })
+  .commit();
 ```
 
-`list` requires the current **cursor-v1 KV query API**, as implemented in the Quant runtime. Older deployments with only get/set/delete must be upgraded before using this template. An unavailable query API returns a visible service error rather than an empty dashboard.
+A runtime without conditional writes, transactions or index queries cannot run this template. The API never shows an empty dashboard for a store it cannot use. A format 1 store, or a store without the declared indexes, returns 503 "The workspace data model is not set up. See README › Data model." An index that is still building returns 503 "The workspace is still being set up. Try again in a minute." [Data model](#data-model) describes the keys, the indexes and the consistency of each query.
 
-Each project is an independent KV record. There is no shared read-modify-write project index, so concurrent creates cannot overwrite one another's index entries. Lists load 50 records at a time; **Load more projects** fetches the next page. Counts, search, charts and activity cover loaded records, and the UI explicitly identifies incomplete lists. Empty evaluated pages with a continuation cursor can still be advanced.
+## Data model
 
-Editing one project or workspace settings uses **last-write-wins**. KV provides no compare-and-swap/transaction in this template. Concurrent edits can overwrite each other; pagination is not a point-in-time snapshot. Use this starter for workloads that accept these semantics. Workflows requiring financial transactions, inventory guarantees or strict collaborative editing need a different consistency design.
+### Keys and collections
+
+Keys whose text before the last `:` is the same form one **collection**. `workspace:studio:project:<id>` is in the collection `workspace:studio:project`.
+
+| Key | Collection | Value |
+| --- | --- | --- |
+| `auth:<sha256>` | `auth` | Access record |
+| `session:<sha256>` | `session` | Session, 8-hour TTL |
+| `workspace:<ws>:settings` | `workspace:<ws>` | Workspace settings |
+| `workspace:<ws>:project:<id>` | `workspace:<ws>:project` | One project, with `workspace`, `nameKey` and `ownerKey` |
+| `workspace:<ws>:activity:<id>` | `workspace:<ws>:activity` | One change, 90-day TTL |
+
+`nameKey` and `ownerKey` are the name and the owner, trimmed and lower-cased. "Website" and "website " are then the same name, and the owner filter ignores case. The API writes these fields; the browser cannot set them. An activity `<id>` is the change time in milliseconds (13 digits), then `-` and 8 hex characters, so key order is time order.
+
+### The `kv_stores` declaration
+
+`quant/meta.json` declares the store, its indexes and its initial values. Only two things read the `indexes` field: portal setup, which creates each index before it seeds the store, and a Quant Studio publish, which adds an index that is declared but missing. A GitHub deploy does not declare indexes. For a store set up any other way, see [Manual setup](#manual-setup).
+
+```json
+"kv_stores": [
+  {
+    "name": "orbit",
+    "indexes": [
+      { "name": "projectsByStatus", "collection": "workspace:*:project",
+        "fields": ["workspace", "status"], "sortBy": "updatedAt", "count": true },
+      { "name": "projectsByOwner", "collection": "workspace:*:project",
+        "fields": ["workspace", "ownerKey"], "sortBy": "updatedAt" },
+      { "name": "projectNames", "collection": "workspace:*:project",
+        "fields": ["workspace", "nameKey"], "unique": true }
+    ],
+    "initial_values": [ ... ]
+  }
+]
+```
+
+`workspace:*:project` matches the project collection of every workspace. Each index has `workspace` as its first field, so every query names one workspace and never sees another workspace's projects.
+
+### Manual setup
+
+If you create the `orbit` store yourself, deploy only from GitHub, or created the site with a portal that does not provision template stores, declare the indexes yourself:
+
+1. Create the store as a **format 2** store. A format 1 store cannot hold indexes, conditional writes or transactions.
+2. In **Compute → K/V Stores**, open the store and declare these three indexes, exactly as `quant/meta.json` gives them:
+
+   ```json
+   {
+     "name": "projectsByStatus",
+     "collection": "workspace:*:project",
+     "fields": ["workspace", "status"],
+     "sortBy": "updatedAt",
+     "count": true
+   }
+   ```
+
+   ```json
+   {
+     "name": "projectsByOwner",
+     "collection": "workspace:*:project",
+     "fields": ["workspace", "ownerKey"],
+     "sortBy": "updatedAt"
+   }
+   ```
+
+   ```json
+   {
+     "name": "projectNames",
+     "collection": "workspace:*:project",
+     "fields": ["workspace", "nameKey"],
+     "unique": true
+   }
+   ```
+
+3. Wait until each index is active. Until then the summary and the filters return "The workspace is still being set up."
+
+Without the indexes, the unfiltered project list and the activity feed work, but the summary counts and the filters return 503 "The workspace data model is not set up. See README › Data model.", and duplicate names are not refused.
+
+### Each index and the query that uses it
+
+| Index | Query | Route |
+| --- | --- | --- |
+| `projectsByStatus` | `list({ index, equals: { workspace, status }, reverse: true })`, newest first by `updatedAt` | `GET /api/projects?status=active` |
+| `projectsByStatus` | the same, with `where: { ownerKey }` | `GET /api/projects?status=active&owner=jamie chen` |
+| `projectsByStatus` (`count: true`) | `count({ index, equals: { workspace, status } })`, once for each status | `GET /api/projects/summary` |
+| `projectsByOwner` | `list({ index, equals: { workspace, ownerKey }, reverse: true })`, newest first | `GET /api/projects?owner=jamie chen` |
+| `projectNames` (`unique: true`) | No query. A create or rename that gives a second project the same `nameKey` fails with `UNIQUE_VIOLATION`, and the API returns 409 "A project with this name already exists." | `POST`, `PATCH /api/projects` |
+
+Two queries use no index:
+
+- `GET /api/projects` with no filter is a `list({ collection: "workspace:<ws>:project" })`. It is in key order, which is random project-id order, so the browser sorts each loaded page by `updatedAt`.
+- `GET /api/activity` is a reverse `list({ collection: "workspace:<ws>:activity" })`, newest first. No count index covers the activity collection, because its entries have a TTL.
+
+### Strong and eventual reads
+
+- **Strong:** `get`, `getEntry`, collection lists, `count` and `getBy`. A sign-out or a revoked key takes effect on the next request. The summary counts and the unfiltered project list always include the last saved change.
+- **Eventual on the edge:** index lists. A project that was just saved can take a moment to appear in, or leave, a filtered view. The browser shows the saved project in the current list at once, so the person who saved it does not see the lag.
+- **A filter change right after a save.** The first page of the new filter can hold the version before the save. When a page has an older copy of a project that the browser holds (an earlier `updatedAt`), the browser keeps its own copy, and leaves the project out when its saved version does not match the filter. The person's next edit then sends the version they saved, not the older one, and does not conflict with their own save.
+
+### Conflicts and retries
+
+- **Versions.** Each project in a list has its `version`. An edit sends that version, and the API writes with `ifVersion`. If someone else saved the project first, the API returns 409 "Someone else changed this project. Reload it to see their change." The dialog keeps the person's input and shows **Load the latest version**. A delete sends `?version=` and follows the same rule. Settings use the same rule with `settingsVersion` from `GET /api/session`; the first settings write uses `ifAbsent`.
+- **Transactions.** A project change and its activity entry commit in one `atomic()` transaction. If the change fails, no activity entry is written.
+- **Create retries.** The browser sends a new `X-Request-Id` with each create, and sends a create again once, with the same ID, after a network failure. The API makes the project id from a hash of the session and that ID, so the retry has the same key and one session never finds another's. Before it writes, the API reads that key with `getEntry` (a strong read): if the first attempt committed, the retry returns the stored project. If the two attempts race, the project write uses `ifAbsent`, so only one commits; the other returns 409 "This project was already created. Reload to see it." The project and its activity entry commit together, so a create writes one project and one activity entry. The commit sends no idempotency key: each attempt has new timestamps, so the backend would see different operations and refuse the key.
+- **Edits and deletes are never sent again.** When the network fails during an edit or a delete, the outcome is not known, so the browser tells the person to reload and check. If they save again from the old version, `ifVersion` refuses it with a conflict instead of writing twice.
+
+### Add an index
+
+1. Add the index to `indexes` in `quant/meta.json`, with a new name.
+2. Change the API to query it.
+3. Publish from Studio, or declare the index in **Compute → K/V Stores** (a GitHub deploy does not declare indexes). The index is then built from the existing data. Until it is active, its queries return "The workspace is still being set up."
+
+Never change the definition of an existing index. To change one, add a new index with a new name, move the queries to it, and leave the old one. Indexes that are removed from `meta.json` are not dropped.
+
+### No migrations
+
+There is no data migration step. An index includes only the records that have its fields. A project written before an index existed, or before the API wrote its fields, is in the unfiltered list but not in the filters or the counts. It joins the indexes on its next edit. If you add a field that an index needs, write it on every save, and edit the older records (or write a one-off script) if they must appear at once.
+
+### Local emulator limits
+
+`scripts/kv.mjs` emulates the KV v2 calls above from the declaration in `quant/meta.json`, so a change to the indexes takes effect locally on the next `npm run dev`. It does not model:
+
+- index build states (an index is ready at once, so `INDEX_NOT_READY` never occurs locally);
+- the eventual lag of index lists (every local read is strong).
+
+Test index lag, build states and retries on a staging site.
 
 ## Deploy to Quant
 
-1. Create the site through the portal’s template flow. With template KV provisioning installed, the portal creates and links `orbit`, waits for it to be ready, and inserts the initial workspace settings from `quant/meta.json` before starting the build. For a GitHub-only deployment or an older portal, create a Quant project and a KV store named `orbit` in **Compute → K/V Stores**. Verify the full identifier is `<organization>-<project>-orbit` and the store is available to the project's functions. If your identifier differs, update the `store` declaration in `quant/edge-functions/api.js`.
+1. Create the site through the portal’s template flow. With template KV provisioning installed, the portal creates and links `orbit`, waits for it to be ready, and inserts the initial workspace settings from `quant/meta.json` before starting the build. For a GitHub-only deployment or an older portal, create a Quant project and a format 2 KV store named `orbit` in **Compute → K/V Stores**, and declare its indexes as [Manual setup](#manual-setup) describes. Verify the full identifier is `<organization>-<project>-orbit` and the store is available to the project's functions. If your identifier differs, update the `store` declaration in `quant/edge-functions/api.js`.
 2. Create your repository from this GitHub template (the portal does this for you when using its template flow). For manual setup, set repository variables `QUANT_CUSTOMER` (organization slug) and `QUANT_PROJECT`, plus secret `QUANT_TOKEN` (deployment token).
 3. Push to `main` or run the deployment workflow. It tests, builds, deploys the static site and function, then purges the static cache. The function's identity is the `uuid` committed in `quant/edge-functions.json`, so every deploy updates the same function. Function UUIDs are scoped to a project, so every site created from this template can keep the same value. Do not change it after the first deploy. To adopt an existing function, replace it with that function's UUID.
 4. Sites created through the portal get the `/api/*` rule from `quant/edge-rules.json` automatically, both on every GitHub deploy and on every Quant Studio publish (see below). For a manual setup without the rules token, bind the deployed **[Orbit]** function to `/api/*` for **all request methods** in the Quant portal instead; ensure the rule precedes any catch-all/static fallback and no cache rule overrides its no-store response headers. KV creation is performed by portal template setup; the GitHub Action alone does not provision storage.
@@ -130,7 +254,7 @@ be used against the shared staging portal.
 
 ### Template KV declarations
 
-`quant/meta.json` declares the store and what setup puts in it:
+`quant/meta.json` declares the store and what setup puts in it. The `indexes` field is described in [Data model](#data-model); it is left out here:
 
 ```json
 "kv_stores": [
@@ -187,9 +311,10 @@ The API rechecks the access record on every request, so deleting or deactivating
 | `auth:<SHA-256>`                       | Workspace, display name, role, active flag              |
 | `session:<SHA-256>`                    | Reference to access record, absolute expiry; 8-hour TTL |
 | `workspace:<slug>:settings`            | Name and description                                    |
-| `workspace:<slug>:project:<random-id>` | One project, timestamps and latest editor               |
+| `workspace:<slug>:project:<random-id>` | One project, timestamps, latest editor and index fields |
+| `workspace:<slug>:activity:<ms>-<hex>` | One change (actor, action, project snapshot); 90-day TTL |
 
-The function checks explicit `false` responses from KV mutations as failures and returns 503 rather than acknowledging an unsuccessful write. There is no automatic retry of project creation, which could duplicate an operation whose outcome is uncertain. Back up production KV data through your normal operational process; the repository and static deployment do not contain it.
+The function treats a KV write that returns no version, or an explicit `false`, as a failure and returns 503 rather than acknowledging an unsuccessful write. The browser sends a create again once, with the same request ID, after a network failure; it never sends an edit or a delete again (see [Conflicts and retries](#conflicts-and-retries)). Back up production KV data through your normal operational process; the repository and static deployment do not contain it.
 
 ## Optional Quant Studio editing
 
@@ -231,8 +356,8 @@ npx playwright install chromium
 BASE_URL=http://localhost:4321 npm run test:browser
 ```
 
-Set `BASE_URL` to the actual development URL printed by Astro. Browser tests expect a freshly seeded local store with eight projects and restore their changes on success. They cover desktop/mobile layouts, authentication, persisted CRUD, settings, filtering, HTML escaping and failed-save recovery. Screenshots go to `.local/screenshots/`. API tests cover isolation, roles, expiry/revocation, CSRF origin checks, validation, pagination, concurrent creates and storage failures.
+Set `BASE_URL` to the actual development URL printed by Astro. Browser tests expect a freshly seeded local store with eight projects (stop the dev server and delete `.local/kv.json` first) and delete the projects they create. The activity entries that they write stay in the local store for 90 days, so the activity feed grows with each run. They cover desktop and phone layouts, authentication, persisted CRUD, server filters by status and owner, summary counts, the activity feed, a two-person edit conflict, a duplicate name, settings conflicts, the create retry, HTML escaping and failed-save recovery. Screenshots go to `.local/screenshots/`. API tests cover isolation, roles, expiry/revocation, CSRF origin checks, validation, pagination, version conflicts, unique names, create retries, indexes, counts, activity and storage failures.
 
 The workflow runs API tests and a production build on pushes to `main`, pull requests, and manual runs. Deployment runs only when the Quant variables and token are configured, and is skipped for pull requests or commits containing `[skip deploy]`. Browser tests are a local verification step. Fonts are loaded from Google Fonts with system fallbacks; self-host them if needed.
 
-References: [Quant edge functions](https://docs.quantcdn.io/compute/functions), [KV stores](https://docs.quantcdn.io/compute/kv-stores/), [deploy action](https://github.com/quantcdn/deploy-action). The local `mc-ai/site` examples informed the function-body and deployment conventions; the newer runtime's cursor API replaces their best-effort shared index.
+References: [Quant edge functions](https://docs.quantcdn.io/compute/functions), [KV stores](https://docs.quantcdn.io/compute/kv-stores/), [deploy action](https://github.com/quantcdn/deploy-action). The local `mc-ai/site` examples informed the function-body and deployment conventions; KV v2 indexes replace their best-effort shared index.
