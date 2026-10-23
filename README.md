@@ -66,10 +66,10 @@ await kvStore
   .atomic(store)
   .set(projectKey, project, { ifVersion })
   .set(activityKey, entry, { ttl })
-  .commit({ idempotencyKey });
+  .commit();
 ```
 
-A runtime without conditional writes, transactions or index queries cannot run this template. A store that is not format 2, or an index that is not ready, returns a visible service error rather than an empty dashboard. [Data model](#data-model) describes the keys, the indexes and the consistency of each query.
+A runtime without conditional writes, transactions or index queries cannot run this template. The API never shows an empty dashboard for a store it cannot use. A format 1 store, or a store without the declared indexes, returns 503 "The workspace data model is not set up. See README › Data model." An index that is still building returns 503 "The workspace is still being set up. Try again in a minute." [Data model](#data-model) describes the keys, the indexes and the consistency of each query.
 
 ## Data model
 
@@ -89,7 +89,7 @@ Keys whose text before the last `:` is the same form one **collection**. `worksp
 
 ### The `kv_stores` declaration
 
-`quant/meta.json` declares the store, its indexes and its initial values. Setup creates each index before it seeds the store, and every publish adds an index that is declared but missing:
+`quant/meta.json` declares the store, its indexes and its initial values. Only two things read the `indexes` field: portal setup, which creates each index before it seeds the store, and a Quant Studio publish, which adds an index that is declared but missing. A GitHub deploy does not declare indexes. For a store set up any other way, see [Manual setup](#manual-setup).
 
 ```json
 "kv_stores": [
@@ -110,6 +110,45 @@ Keys whose text before the last `:` is the same form one **collection**. `worksp
 
 `workspace:*:project` matches the project collection of every workspace. Each index has `workspace` as its first field, so every query names one workspace and never sees another workspace's projects.
 
+### Manual setup
+
+If you create the `orbit` store yourself, deploy only from GitHub, or created the site with a portal that does not provision template stores, declare the indexes yourself:
+
+1. Create the store as a **format 2** store. A format 1 store cannot hold indexes, conditional writes or transactions.
+2. In **Compute → K/V Stores**, open the store and declare these three indexes, exactly as `quant/meta.json` gives them:
+
+   ```json
+   {
+     "name": "projectsByStatus",
+     "collection": "workspace:*:project",
+     "fields": ["workspace", "status"],
+     "sortBy": "updatedAt",
+     "count": true
+   }
+   ```
+
+   ```json
+   {
+     "name": "projectsByOwner",
+     "collection": "workspace:*:project",
+     "fields": ["workspace", "ownerKey"],
+     "sortBy": "updatedAt"
+   }
+   ```
+
+   ```json
+   {
+     "name": "projectNames",
+     "collection": "workspace:*:project",
+     "fields": ["workspace", "nameKey"],
+     "unique": true
+   }
+   ```
+
+3. Wait until each index is active. Until then the summary and the filters return "The workspace is still being set up."
+
+Without the indexes, the unfiltered project list and the activity feed work, but the summary counts and the filters return 503 "The workspace data model is not set up. See README › Data model.", and duplicate names are not refused.
+
 ### Each index and the query that uses it
 
 | Index | Query | Route |
@@ -129,18 +168,20 @@ Two queries use no index:
 
 - **Strong:** `get`, `getEntry`, collection lists, `count` and `getBy`. A sign-out or a revoked key takes effect on the next request. The summary counts and the unfiltered project list always include the last saved change.
 - **Eventual on the edge:** index lists. A project that was just saved can take a moment to appear in, or leave, a filtered view. The browser shows the saved project in the current list at once, so the person who saved it does not see the lag.
+- **A filter change right after a save.** The first page of the new filter can hold the version before the save. When a page has an older copy of a project that the browser holds (an earlier `updatedAt`), the browser keeps its own copy, and leaves the project out when its saved version does not match the filter. The person's next edit then sends the version they saved, not the older one, and does not conflict with their own save.
 
 ### Conflicts and retries
 
 - **Versions.** Each project in a list has its `version`. An edit sends that version, and the API writes with `ifVersion`. If someone else saved the project first, the API returns 409 "Someone else changed this project. Reload it to see their change." The dialog keeps the person's input and shows **Load the latest version**. A delete sends `?version=` and follows the same rule. Settings use the same rule with `settingsVersion` from `GET /api/session`; the first settings write uses `ifAbsent`.
 - **Transactions.** A project change and its activity entry commit in one `atomic()` transaction. If the change fails, no activity entry is written.
-- **Idempotency.** The browser sends a new `X-Request-Id` with each create, update and delete. The API commits with an idempotency key made from the session and that ID, so a repeated request writes at most once, and one session cannot replay another's. The browser sends a create again once, with the same ID, after a network failure. It never sends an edit or a delete again: when the network fails, it tells the person to reload and check.
+- **Create retries.** The browser sends a new `X-Request-Id` with each create, and sends a create again once, with the same ID, after a network failure. The API makes the project id from a hash of the session and that ID, so the retry has the same key and one session never finds another's. Before it writes, the API reads that key with `getEntry` (a strong read): if the first attempt committed, the retry returns the stored project. If the two attempts race, the project write uses `ifAbsent`, so only one commits; the other returns 409 "This project was already created. Reload to see it." The project and its activity entry commit together, so a create writes one project and one activity entry. The commit sends no idempotency key: each attempt has new timestamps, so the backend would see different operations and refuse the key.
+- **Edits and deletes are never sent again.** When the network fails during an edit or a delete, the outcome is not known, so the browser tells the person to reload and check. If they save again from the old version, `ifVersion` refuses it with a conflict instead of writing twice.
 
 ### Add an index
 
 1. Add the index to `indexes` in `quant/meta.json`, with a new name.
 2. Change the API to query it.
-3. Publish. The deploy adds the index to the store, and the index is built from the existing data.
+3. Publish from Studio, or declare the index in **Compute → K/V Stores** (a GitHub deploy does not declare indexes). The index is then built from the existing data. Until it is active, its queries return "The workspace is still being set up."
 
 Never change the definition of an existing index. To change one, add a new index with a new name, move the queries to it, and leave the old one. Indexes that are removed from `meta.json` are not dropped.
 
@@ -153,14 +194,13 @@ There is no data migration step. An index includes only the records that have it
 `scripts/kv.mjs` emulates the KV v2 calls above from the declaration in `quant/meta.json`, so a change to the indexes takes effect locally on the next `npm run dev`. It does not model:
 
 - index build states (an index is ready at once, so `INDEX_NOT_READY` never occurs locally);
-- the eventual lag of index lists (every local read is strong);
-- durable idempotency (idempotency keys are kept in memory and are lost when the dev server stops).
+- the eventual lag of index lists (every local read is strong).
 
 Test index lag, build states and retries on a staging site.
 
 ## Deploy to Quant
 
-1. Create the site through the portal’s template flow. With template KV provisioning installed, the portal creates and links `orbit`, waits for it to be ready, and inserts the initial workspace settings from `quant/meta.json` before starting the build. For a GitHub-only deployment or an older portal, create a Quant project and a KV store named `orbit` in **Compute → K/V Stores**. Verify the full identifier is `<organization>-<project>-orbit` and the store is available to the project's functions. If your identifier differs, update the `store` declaration in `quant/edge-functions/api.js`.
+1. Create the site through the portal’s template flow. With template KV provisioning installed, the portal creates and links `orbit`, waits for it to be ready, and inserts the initial workspace settings from `quant/meta.json` before starting the build. For a GitHub-only deployment or an older portal, create a Quant project and a format 2 KV store named `orbit` in **Compute → K/V Stores**, and declare its indexes as [Manual setup](#manual-setup) describes. Verify the full identifier is `<organization>-<project>-orbit` and the store is available to the project's functions. If your identifier differs, update the `store` declaration in `quant/edge-functions/api.js`.
 2. Create your repository from this GitHub template (the portal does this for you when using its template flow). For manual setup, set repository variables `QUANT_CUSTOMER` (organization slug) and `QUANT_PROJECT`, plus secret `QUANT_TOKEN` (deployment token).
 3. Push to `main` or run the deployment workflow. It tests, builds, deploys the static site and function, then purges the static cache. The function's identity is the `uuid` committed in `quant/edge-functions.json`, so every deploy updates the same function. Function UUIDs are scoped to a project, so every site created from this template can keep the same value. Do not change it after the first deploy. To adopt an existing function, replace it with that function's UUID.
 4. Sites created through the portal get the `/api/*` rule from `quant/edge-rules.json` automatically, both on every GitHub deploy and on every Quant Studio publish (see below). For a manual setup without the rules token, bind the deployed **[Orbit]** function to `/api/*` for **all request methods** in the Quant portal instead; ensure the rule precedes any catch-all/static fallback and no cache rule overrides its no-store response headers. KV creation is performed by portal template setup; the GitHub Action alone does not provision storage.
@@ -316,7 +356,7 @@ npx playwright install chromium
 BASE_URL=http://localhost:4321 npm run test:browser
 ```
 
-Set `BASE_URL` to the actual development URL printed by Astro. Browser tests expect a freshly seeded local store with eight projects (stop the dev server and delete `.local/kv.json` first) and delete the projects they create. The activity entries that they write stay in the local store for 90 days, so the activity feed grows with each run. They cover desktop and phone layouts, authentication, persisted CRUD, server filters by status and owner, summary counts, the activity feed, a two-person edit conflict, a duplicate name, settings conflicts, the create retry, HTML escaping and failed-save recovery. Screenshots go to `.local/screenshots/`. API tests cover isolation, roles, expiry/revocation, CSRF origin checks, validation, pagination, version conflicts, unique names, idempotent retries, indexes, counts, activity and storage failures.
+Set `BASE_URL` to the actual development URL printed by Astro. Browser tests expect a freshly seeded local store with eight projects (stop the dev server and delete `.local/kv.json` first) and delete the projects they create. The activity entries that they write stay in the local store for 90 days, so the activity feed grows with each run. They cover desktop and phone layouts, authentication, persisted CRUD, server filters by status and owner, summary counts, the activity feed, a two-person edit conflict, a duplicate name, settings conflicts, the create retry, HTML escaping and failed-save recovery. Screenshots go to `.local/screenshots/`. API tests cover isolation, roles, expiry/revocation, CSRF origin checks, validation, pagination, version conflicts, unique names, create retries, indexes, counts, activity and storage failures.
 
 The workflow runs API tests and a production build on pushes to `main`, pull requests, and manual runs. Deployment runs only when the Quant variables and token are configured, and is skipped for pull requests or commits containing `[skip deploy]`. Browser tests are a local verification step. Fonts are loaded from Google Fonts with system fallbacks; self-host them if needed.
 
