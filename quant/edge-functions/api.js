@@ -33,6 +33,8 @@ const COPY = {
   // A create can conflict only with an earlier attempt of the same request.
   created: "This project was already created. Reload to see it.",
   notReady: "The workspace is still being set up. Try again in a minute.",
+  // The store is format 1, or the indexes in quant/meta.json are not declared.
+  dataModel: "The workspace data model is not set up. See README › Data model.",
   unavailable: "The workspace could not be reached. Please try again.",
   version: "A current version is required. Reload and try again.",
 };
@@ -76,9 +78,11 @@ const setIf = async (key, value, condition) => {
   if (typeof result?.version !== "string") throw new Error("KV write rejected");
   return result.version;
 };
-const remove = async (key) => {
-  if ((await kvStore.delete(store, key)) === false)
-    throw new Error("KV delete rejected");
+// On format 2, deleting a missing key returns false. A session that is
+// already gone is signed out; any other false is a failed delete.
+const removeSession = async (key) => {
+  if ((await kvStore.delete(store, key)) !== false) return;
+  if (await kvStore.getEntry(store, key)) throw new Error("KV delete rejected");
 };
 const cookie = (value, age = sessionSeconds) =>
   `${cookieName}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? "; Secure" : ""}`;
@@ -121,6 +125,13 @@ async function readBody() {
   if (!isObject(body)) fail(400, "A JSON object is required.");
   return body;
 }
+// C0 control characters and DEL, except tab, newline and carriage return.
+// The KV backend refuses U+0000 in an indexed field.
+const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+const plain = (value, label) => {
+  if (CONTROL.test(value)) fail(400, `${label} must not contain control characters.`);
+  return value;
+};
 const text = (value, label, max, optional = false) => {
   if (
     typeof value !== "string" ||
@@ -131,7 +142,7 @@ const text = (value, label, max, optional = false) => {
       400,
       `${label} must be ${optional ? "at most" : "between 1 and"} ${max} characters.`,
     );
-  return value.trim();
+  return plain(value.trim(), label);
 };
 const choice = (value, allowed, message) => {
   if (!allowed.includes(value)) fail(400, message);
@@ -171,7 +182,7 @@ function projectInput(body) {
 }
 const cursorParam = () => {
   const cursor = url.searchParams.get("cursor");
-  if (cursor && cursor.length > 4096) fail(400, "Invalid cursor.");
+  if (cursor && cursor.length > 8192) fail(400, "Invalid cursor.");
   return cursor ? { cursor } : {};
 };
 
@@ -197,8 +208,10 @@ const cookieToken = () =>
 async function sessionHashOf(token) {
   return token && /^[a-f0-9]{64}$/.test(token) ? hash(token) : null;
 }
-// The idempotency key: the SHA-256 hex of the session hash and the client's
-// request ID, so one session can never replay another's transaction.
+// The request key: the SHA-256 hex of the session hash and the client's
+// request ID. A create derives its project id from it, so a retry of the
+// same create finds the first attempt, and one session never finds
+// another's.
 async function requestKeyOf(sessionHash) {
   const requestId = request.headers.get("x-request-id") ?? "";
   return REQUEST_ID.test(requestId)
@@ -224,7 +237,7 @@ async function signIn() {
   return json({ ok: true }, 200, { "Set-Cookie": cookie(token) });
 }
 async function signOut(sessionHash) {
-  if (sessionHash) await remove(`session:${sessionHash}`);
+  if (sessionHash) await removeSession(`session:${sessionHash}`);
   return json({ ok: true }, 200, { "Set-Cookie": cookie("", 0) });
 }
 async function authenticate(sessionHash) {
@@ -311,7 +324,7 @@ const withVersion = (entry) => ({ ...entry.value, version: entry.version });
 const ownerParam = () => {
   const owner = (url.searchParams.get("owner") ?? "").trim().toLowerCase();
   if (owner.length > 60) fail(400, "Owner must be at most 60 characters.");
-  return owner;
+  return plain(owner, "Owner");
 };
 // A filtered list uses an index, newest first by updatedAt. The default list
 // is a strong collection list: it is in key order (project ids are random),
@@ -374,17 +387,17 @@ function buildProject({ principal }, id, fields, existing, ms) {
     ownerKey: fields.owner.toLowerCase(),
   };
 }
-// With a request ID, the ids come from the idempotency key, so a retry of
-// the same request builds the same operations.
-async function idFor(ctx, purpose, length) {
+// With a request ID, a create's project id comes from the request key, so a
+// retry of the same create has the same key.
+async function projectIdFor(ctx) {
   const source = ctx.requestKey
-    ? await hash(`${purpose}:${ctx.requestKey}`)
+    ? await hash(`project:${ctx.requestKey}`)
     : random();
-  return source.slice(0, length);
+  return source.slice(0, 32);
 }
 // One activity entry for each project change, in the same transaction.
-async function activityEntry(ctx, action, project, ms) {
-  const id = `${String(ms).padStart(13, "0")}-${await idFor(ctx, "activity", 8)}`;
+function activityEntry(ctx, action, project, ms) {
+  const id = `${String(ms).padStart(13, "0")}-${random().slice(0, 8)}`;
   const { name, status, progress, priority } = project;
   return [
     `${ctx.prefix}activity:${id}`,
@@ -398,41 +411,38 @@ async function activityEntry(ctx, action, project, ms) {
     { ttl: activitySeconds },
   ];
 }
-async function commit(ctx, tx, ackKey) {
-  const result = ctx.requestKey
-    ? await tx.commit({ idempotencyKey: ctx.requestKey })
-    : await tx.commit();
+// No idempotency key: each attempt has new timestamps, so the backend would
+// see different operations. A create is protected by its id and ifAbsent; a
+// PATCH or DELETE is never sent again.
+async function commit(tx, ackKey) {
+  const result = await tx.commit();
   if (!isObject(result?.versions) || typeof result.versions[ackKey] !== "string")
     throw new Error("KV transaction rejected");
-  return result;
+  return result.versions[ackKey];
 }
 async function readProject(key) {
   const entry = await kvStore.getEntry(store, key);
   if (!entry || !isObject(entry.value)) fail(404, "Project not found.");
   return entry;
 }
-// A replayed transaction wrote nothing now: answer with what is stored.
-async function saved(result, key, project) {
-  if (result.replayed) return withVersion(await readProject(key));
-  return { ...project, version: result.versions[key] };
-}
 async function createProject(ctx) {
   const fields = projectInput(await readBody());
-  const id = await idFor(ctx, "project", 32);
+  const id = await projectIdFor(ctx);
   const key = projectKey(ctx.prefix, id);
-  // A retry whose first attempt committed finds its project already stored.
+  // A retry whose first attempt committed finds its project already stored
+  // (getEntry is strong). A retry that races its first attempt meets ifAbsent.
   const earlier = ctx.requestKey ? await kvStore.getEntry(store, key) : null;
   if (isObject(earlier?.value))
     return json({ project: withVersion(earlier) }, 201);
   const ms = Date.now();
   const project = buildProject(ctx, id, fields, null, ms);
-  const activity = await activityEntry(ctx, "created", project, ms);
+  const activity = activityEntry(ctx, "created", project, ms);
   const tx = kvStore
     .atomic(store)
     .set(key, project, { ifAbsent: true })
     .set(...activity);
-  const result = await commit(ctx, tx, key);
-  return json({ project: await saved(result, key, project) }, 201);
+  const version = await commit(tx, key);
+  return json({ project: { ...project, version } }, 201);
 }
 async function updateProject(ctx, id) {
   const key = projectKey(ctx.prefix, id);
@@ -442,13 +452,13 @@ async function updateProject(ctx, id) {
   const fields = projectInput(body);
   const ms = Date.now();
   const project = buildProject(ctx, id, fields, existing.value, ms);
-  const activity = await activityEntry(ctx, "updated", project, ms);
+  const activity = activityEntry(ctx, "updated", project, ms);
   const tx = kvStore
     .atomic(store)
     .set(key, project, { ifVersion: version })
     .set(...activity);
-  const result = await commit(ctx, tx, key);
-  return json({ project: await saved(result, key, project) });
+  const saved = await commit(tx, key);
+  return json({ project: { ...project, version: saved } });
 }
 async function deleteProject(ctx, id) {
   const key = projectKey(ctx.prefix, id);
@@ -456,12 +466,12 @@ async function deleteProject(ctx, id) {
   const version = versionOf(url.searchParams.get("version"));
   const ms = Date.now();
   const project = { ...existing.value, id };
-  const activity = await activityEntry(ctx, "deleted", project, ms);
+  const activity = activityEntry(ctx, "deleted", project, ms);
   const tx = kvStore
     .atomic(store)
     .delete(key, { ifVersion: version })
     .set(...activity);
-  await commit(ctx, tx, activity[0]);
+  await commit(tx, activity[0]);
   return json({ ok: true });
 }
 
@@ -516,6 +526,12 @@ function conflictCopy() {
   if (route === "POST /api/projects") return COPY.created;
   return path === "/api/settings" ? COPY.settingsConflict : COPY.conflict;
 }
+// A format 1 store, or an index read whose index is not declared (the
+// backend's message is "No index named <name>").
+const missingDataModel = (error) =>
+  error.code === "REQUIRES_FORMAT_2" ||
+  (error.code === "VALIDATION" &&
+    /^No index named /.test(String(error.message)));
 function kvErrorResponse(error) {
   if (error.code === "CONFLICT")
     return json(
@@ -531,6 +547,7 @@ function kvErrorResponse(error) {
     return json({ error: COPY.duplicate }, 409);
   if (error.code === "INDEX_NOT_READY")
     return json({ error: COPY.notReady }, 503);
+  if (missingDataModel(error)) return json({ error: COPY.dataModel }, 503);
   return null;
 }
 function errorResponse(error) {

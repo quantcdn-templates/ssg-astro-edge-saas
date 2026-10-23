@@ -27,8 +27,9 @@ const project = {
   progress: 25,
   due: "2026-11-01",
 };
-async function setup() {
-  const kv = await createKV(undefined, { indexes });
+// declared: the indexes the store has (all of quant/meta.json by default).
+async function setup(declared = indexes) {
+  const kv = await createKV(undefined, { indexes: declared });
   for (const [key, workspace, role] of [
     [ownerKey, "alpha", "owner"],
     [viewerKey, "alpha", "viewer"],
@@ -303,6 +304,21 @@ test("logout, expiry and credential revocation invalidate existing sessions", as
   await kv.delete(store, `auth:${digest(ownerKey)}`);
   assert.equal((await call("/projects", { cookie })).status, 401);
 });
+test("a second sign-out with the same cookie still returns 200 and clears the cookie", async () => {
+  const { call, login, kv } = await setup();
+  const cookie = await login();
+  for (const attempt of [1, 2]) {
+    const res = await call("/session", { method: "DELETE", cookie });
+    assert.equal(res.status, 200, `sign-out ${attempt}`);
+    assert.match(res.headers.get("set-cookie"), /^__Host-orbit=; .*Max-Age=0; Secure$/);
+  }
+  assert.equal((await call("/projects", { cookie })).status, 401);
+  // A delete that fails while the session is still stored is not a sign-out.
+  const live = await login();
+  kv.delete = async () => false;
+  assert.equal((await call("/session", { method: "DELETE", cookie: live })).status, 503);
+  assert.equal((await call("/session", { cookie: live })).status, 200);
+});
 test("pagination does not lose concurrent creates or cross workspace boundaries", async () => {
   const { call, login } = await setup();
   const cookie = await login();
@@ -426,18 +442,21 @@ const notReadyCopy =
   "The workspace is still being set up. Try again in a minute.";
 const unavailableCopy = "The workspace could not be reached. Please try again.";
 // A clock that moves 1 s on each read, so updatedAt and activity ids order.
+// A later use starts after the last time an earlier use gave.
+let clockEnd = 0;
 async function withClock(fn) {
   const realNow = Date.now;
-  let t = realNow();
+  let t = Math.max(realNow(), clockEnd);
   Date.now = () => (t += 1000);
   try {
     return await fn();
   } finally {
     Date.now = realNow;
+    clockEnd = t;
   }
 }
-async function orbit() {
-  const env = await setup();
+async function orbit(declared) {
+  const env = await setup(declared);
   const cookie = await env.login();
   const create = async (fields = {}, headers = {}) => {
     const res = await env.call("/projects", {
@@ -521,11 +540,12 @@ test("a duplicate project name is a 409, ignoring case and whitespace", async ()
   assert.equal((await o.get("/projects")).body.projects.length, 2);
 });
 
-test("a create replayed with the same request ID writes once", async () => {
+test("a create retry with the same request ID returns the stored project and writes once", async () => {
   const o = await orbit();
   const headers = { "X-Request-Id": "req_0123456789abcdef" };
   const first = await o.create({}, headers);
-  const again = await o.create({}, headers);
+  // The retry has new timestamps: only the id, getEntry and ifAbsent protect it.
+  const again = await withClock(() => o.create({}, headers));
   assert.equal(first.res.status, 201);
   assert.equal(again.res.status, 201);
   assert.deepEqual(again.body, first.body);
@@ -576,27 +596,7 @@ test("a create that races its own retry gets the already-created copy, not the e
   assert.equal((await o.activity()).length, 1);
 });
 
-test("a replayed transaction returns the first result without a second write", async () => {
-  const o = await orbit();
-  const { body } = await o.create();
-  const headers = { "X-Request-Id": "edit-0123456789abcdef" };
-  const realNow = Date.now;
-  const fixed = realNow();
-  Date.now = () => fixed;
-  let first, again;
-  try {
-    first = await o.patch(body.project.id, { progress: 60, version: body.project.version }, headers);
-    again = await o.patch(body.project.id, { progress: 60, version: body.project.version }, headers);
-  } finally {
-    Date.now = realNow;
-  }
-  assert.equal(first.res.status, 200);
-  assert.equal(again.res.status, 200);
-  assert.deepEqual(again.body, first.body);
-  assert.equal((await o.activity()).length, 2);
-});
-
-test("an invalid request ID commits without an idempotency key", async () => {
+test("no commit sends an idempotency key; an invalid request ID gives a new id", async () => {
   const o = await orbit();
   const commits = [];
   const atomic = o.kv.atomic;
@@ -613,12 +613,19 @@ test("an invalid request ID commits without an idempotency key", async () => {
   assert.equal((await o.create({ name: "One" }, headers)).res.status, 201);
   assert.equal((await o.create({ name: "Two" }, headers)).res.status, 201);
   assert.equal((await o.get("/projects")).body.projects.length, 2);
-  assert.deepEqual(commits, [[], []]);
-  assert.equal(
-    (await o.create({ name: "Three" }, { "X-Request-Id": "valid_request_id_1" })).res.status,
-    201,
-  );
-  assert.match(commits[2][0].idempotencyKey, /^[a-f0-9]{64}$/);
+  const valid = { "X-Request-Id": "valid_request_id_1" };
+  const { body } = await o.create({ name: "Three" }, valid);
+  assert.equal(body.project.id, (await o.create({ name: "Three" }, valid)).body.project.id);
+  const edit = await o.patch(body.project.id, { name: "Three", progress: 60, version: body.project.version }, valid);
+  assert.equal(edit.res.status, 200);
+  const del = await o.call(`/projects/${body.project.id}?version=${edit.body.project.version}`, {
+    method: "DELETE",
+    cookie: o.cookie,
+    headers: valid,
+  });
+  assert.equal(del.status, 200);
+  // Three creates, one edit and one delete; the retried create did not commit.
+  assert.deepEqual(commits, [[], [], [], [], []]);
 });
 
 test("a delete with a stale version is a 409 and the project is kept", async () => {
@@ -712,7 +719,7 @@ test("filters by status, by owner and by both, newest first", async () => {
   assert.deepEqual(await names("status=active&owner=Alex"), ["P4", "P1"]);
   assert.deepEqual(await names("status=archived"), []);
   assert.equal((await o.get("/projects?status=urgent")).res.status, 400);
-  assert.equal((await o.get(`/projects?status=active&cursor=${"x".repeat(4097)}`)).res.status, 400);
+  assert.equal((await o.get(`/projects?status=active&cursor=${"x".repeat(8193)}`)).res.status, 400);
   // Other workspaces never appear in a filtered list.
   const other = await o.login(otherKey);
   assert.deepEqual((await o.get("/projects?owner=alex", other)).body.projects, []);
@@ -773,7 +780,10 @@ test("activity is newest first, pages with a cursor and records each change", as
   // A viewer may read activity; another workspace sees none of it.
   assert.equal((await o.get("/activity", await o.login(viewerKey))).body.activity.length, 50);
   assert.deepEqual((await o.get("/activity", await o.login(otherKey))).body.activity, []);
-  assert.equal((await o.get(`/activity?cursor=${"x".repeat(4097)}`)).res.status, 400);
+  assert.equal((await o.get(`/activity?cursor=${"x".repeat(8193)}`)).res.status, 400);
+  // The runtime accepts a cursor of up to 8192 characters: this one reaches
+  // the KV call, which refuses it as an invalid cursor (not the 400 here).
+  assert.equal((await o.get(`/activity?cursor=${"x".repeat(8192)}`)).res.status, 503);
 });
 
 test("a project from before this change is listed but not counted until its next edit", async () => {
@@ -860,4 +870,68 @@ test("a viewer still cannot write, but may read lists, summary and activity", as
   assert.equal((await o.stored(body.project.id)).version, version);
   for (const path of ["/projects", "/projects?status=active", "/projects/summary", "/activity"])
     assert.equal((await o.get(path, viewer)).res.status, 200, path);
+});
+
+test("text fields refuse control characters other than tab and newline", async () => {
+  const o = await orbit();
+  for (const [field, label] of [
+    ["name", "Project name"],
+    ["description", "Description"],
+    ["owner", "Owner"],
+  ])
+    for (const bad of ["\u0000", "\u0007", "\u001b", "\u007f"]) {
+      const { res, body } = await o.create({ [field]: `A${bad}B` });
+      assert.equal(res.status, 400, `${field} ${JSON.stringify(bad)}`);
+      assert.deepEqual(body, { error: `${label} must not contain control characters.` });
+    }
+  const ok = await o.create({ name: "Tab\tname", description: "Line one\nLine two\r\nthree" });
+  assert.equal(ok.res.status, 201);
+  const settings = await o.call("/settings", {
+    method: "PATCH",
+    cookie: o.cookie,
+    body: { name: "Work\u0000space", description: "", version: null },
+  });
+  assert.equal(settings.status, 400);
+  assert.deepEqual(await settings.json(), { error: "Workspace name must not contain control characters." });
+  const filter = await o.get(`/projects?owner=${encodeURIComponent("al\u0000ex")}`);
+  assert.equal(filter.res.status, 400);
+  assert.deepEqual(filter.body, { error: "Owner must not contain control characters." });
+  assert.equal((await o.get("/projects")).body.projects.length, 1);
+});
+
+const dataModelCopy = "The workspace data model is not set up. See README › Data model.";
+test("a store without the declared indexes gives the data model message, never the KV message", async () => {
+  const o = await orbit([]);
+  assert.equal((await o.create()).res.status, 201);
+  // The unfiltered list and activity are collection lists: they need no index.
+  assert.equal((await o.get("/projects")).body.projects.length, 1);
+  assert.equal((await o.get("/activity")).res.status, 200);
+  for (const path of ["/projects/summary", "/projects?status=active", "/projects?owner=alex"]) {
+    const { res, body } = await o.get(path);
+    assert.equal(res.status, 503, path);
+    assert.deepEqual(body, { error: dataModelCopy }, path);
+  }
+});
+
+test("a format 1 store gives the data model message, never the KV message", async () => {
+  const o = await orbit();
+  const format1 = () => {
+    throw new KVError("REQUIRES_FORMAT_2", "Store test-project-orbit is format 1 (secret detail)");
+  };
+  o.kv.list = async () => format1();
+  o.kv.count = async () => format1();
+  o.kv.atomic = () => ({ set() { return this; }, commit: async () => format1() });
+  for (const path of ["/projects", "/projects/summary", "/activity"]) {
+    const { res, body } = await o.get(path);
+    assert.equal(res.status, 503, path);
+    assert.deepEqual(body, { error: dataModelCopy }, path);
+  }
+  const { res, body } = await o.create();
+  assert.equal(res.status, 503);
+  assert.deepEqual(body, { error: dataModelCopy });
+  // Another VALIDATION error is still the generic message.
+  o.kv.count = async () => {
+    throw new KVError("VALIDATION", "Index projectsByStatus is not a count index");
+  };
+  assert.deepEqual((await o.get("/projects/summary")).body, { error: unavailableCopy });
 });
