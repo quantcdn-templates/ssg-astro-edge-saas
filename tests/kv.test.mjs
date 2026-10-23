@@ -602,3 +602,113 @@ test("indexesFromMeta reads the orbit store's indexes", async () => {
   );
   assert.ok(Array.isArray(real));
 });
+
+test("an indexed write refuses a string with U+0000 in an indexed field", async () => {
+  const kv = await createKV(undefined, {
+    indexes: [
+      { name: "byOwner", collection: "t", fields: ["owner"], sortBy: "at" },
+    ],
+  });
+  await rejects(kv.set(store, "t:a", { owner: "x\u0000y" }), "VALIDATION", {
+    message: "Indexed strings must not contain U+0000",
+  });
+  await rejects(
+    kv.set(store, "t:a", { owner: "x", at: "1\u00002" }),
+    "VALIDATION",
+  );
+  assert.equal(await kv.get(store, "t:a"), null);
+  await rejects(
+    kv.atomic(store).set("free", 1).set("t:b", { owner: "\u0000" }).commit(),
+    "VALIDATION",
+    { operation: 1 },
+  );
+  assert.equal(await kv.get(store, "free"), null);
+  assert.equal(
+    await kv.set(store, "t:c", { owner: "x", note: "a\u0000b" }),
+    true,
+  );
+  assert.equal(await kv.set(store, "u:a", { owner: "x\u0000y" }), true);
+  await rejects(
+    kv.list(store, { index: "byOwner", equals: { owner: "\u0000" } }),
+    "VALIDATION",
+  );
+});
+
+test("a stored string with U+0000 never breaks index or where lists", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "orbit-kv-"));
+  const file = join(dir, "kv.json");
+  const plain = await createKV(file);
+  await plain.set(store, "t:bad", { owner: "x\u0000y", at: 1 });
+  await plain.set(store, "t:sort", { owner: "z", at: "a\u0000" });
+  await plain.set(store, "t:good", { owner: "z", at: 2 });
+  const kv = await createKV(file, {
+    indexes: [
+      { name: "byOwner", collection: "t", fields: ["owner"], sortBy: "at" },
+      { name: "owners", collection: "t", fields: ["owner"], count: true },
+    ],
+  });
+  const keys = (page) => page.items.map((i) => i.key);
+  const page = await kv.list(store, {
+    index: "byOwner",
+    equals: { owner: "z" },
+  });
+  assert.deepEqual(keys(page), ["t:good"]);
+  const where = await kv.list(store, {
+    collection: "t",
+    where: { owner: "z" },
+  });
+  assert.deepEqual(keys(where), ["t:good", "t:sort"]);
+  const none = await kv.list(store, { collection: "t", where: { at: 1 } });
+  assert.deepEqual(keys(none), ["t:bad"]);
+  assert.equal(
+    await kv.count(store, { index: "owners", equals: { owner: "z" } }),
+    2,
+  );
+});
+
+test("list items carry timestamps and version like the runtime's query items", async (t) => {
+  const kv = await fresh();
+  t.mock.method(Date, "now", () => 1_800_000_000_000);
+  await kv.set(store, "log:a", 1, { ttl: 60 });
+  await kv.set(store, "log:b", 2);
+  const page = await kv.list(store, { collection: "log", includeValues: true });
+  const iso = new Date(1_800_000_000_000).toISOString();
+  const { version: va } = await kv.getEntry(store, "log:a");
+  const { version: vb } = await kv.getEntry(store, "log:b");
+  assert.deepEqual(page.items, [
+    {
+      key: "log:a",
+      encrypted: false,
+      createdAt: iso,
+      updatedAt: iso,
+      expiresAt: 1_800_000_060,
+      version: va,
+      value: 1,
+    },
+    {
+      key: "log:b",
+      encrypted: false,
+      createdAt: iso,
+      updatedAt: iso,
+      version: vb,
+      value: 2,
+    },
+  ]);
+  assert.deepEqual(Object.keys(page.items[0]), [
+    "key",
+    "encrypted",
+    "createdAt",
+    "updatedAt",
+    "expiresAt",
+    "version",
+    "value",
+  ]);
+});
+
+test("getMany converts keys to strings first, as the polyfill does", async () => {
+  const kv = await fresh();
+  await kv.set(store, "1", "one");
+  const [entry] = await kv.getMany(store, [1]);
+  assert.equal(entry.key, "1");
+  assert.equal(entry.value, "one");
+});

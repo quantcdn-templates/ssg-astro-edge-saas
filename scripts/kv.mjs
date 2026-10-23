@@ -132,11 +132,28 @@ function encodeScalar(value) {
   return encoder ? encoder(value) : undefined;
 }
 
+// A stored value never throws on a read: a string with U+0000 cannot be
+// indexed, so it is not a member and matches nothing.
+const isPoisoned = (value) => typeof value === "string" && value.includes(SEP);
+const storedScalar = (value) =>
+  isPoisoned(value) ? undefined : encodeScalar(value);
+
+// The fields that an index maintains: its fields and its sortBy.
+const indexedFields = (def) =>
+  def.sortBy ? [...def.fields, def.sortBy] : def.fields;
+
+function holdsPoisonedField(def, value) {
+  if (!isPlainObject(value)) return false;
+  return indexedFields(def).some(
+    (field) => own(value, field) && isPoisoned(value[field]),
+  );
+}
+
 function fieldValues(def, value) {
   if (!isPlainObject(value)) return def.fields.length === 0 ? [] : undefined;
   const out = [];
   for (const field of def.fields) {
-    const encoded = own(value, field) ? encodeScalar(value[field]) : undefined;
+    const encoded = own(value, field) ? storedScalar(value[field]) : undefined;
     if (encoded === undefined) return undefined;
     out.push(encoded);
   }
@@ -146,7 +163,7 @@ function fieldValues(def, value) {
 function sortPart(def, value) {
   if (!def.sortBy || !isPlainObject(value) || !own(value, def.sortBy))
     return "";
-  return encodeScalar(value[def.sortBy]) ?? "";
+  return storedScalar(value[def.sortBy]) ?? "";
 }
 
 const sameValues = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -592,8 +609,16 @@ function toEntry(key, entry) {
   return out;
 }
 
+// toQueryItem and copyItemMetadata: timestamps, then version, then value.
 function toItem(key, entry, includeValues) {
-  const item = { key, encrypted: !!entry.encrypted, version: entry.version };
+  const item = {
+    key,
+    encrypted: !!entry.encrypted,
+    createdAt: isoTime(entry.createdAt),
+    updatedAt: isoTime(entry.updatedAt),
+  };
+  if (entry.expires) item.expiresAt = Math.floor(entry.expires / 1000);
+  item.version = entry.version;
   if (includeValues) item.value = entry.encrypted ? "[ENCRYPTED]" : entry.value;
   return item;
 }
@@ -618,11 +643,12 @@ function decodeCursor(cursor, query) {
 function whereMatches(entry, where) {
   if (!where) return true;
   if (entry.encrypted || !isPlainObject(entry.value)) return false;
-  return Object.entries(where).every(
-    ([field, value]) =>
-      own(entry.value, field) &&
-      encodeScalar(entry.value[field]) === encodeScalar(value),
-  );
+  return Object.entries(where).every(([field, value]) => {
+    const wanted = encodeScalar(value);
+    return (
+      own(entry.value, field) && storedScalar(entry.value[field]) === wanted
+    );
+  });
 }
 
 function typeMatches(entry, type) {
@@ -726,7 +752,9 @@ export async function createKV(file, { indexes: declared = [] } = {}) {
   }
 
   const memberValues = (def, key, entry) =>
-    entry.encrypted || !matchesCollection(def.collection, collectionOf(key))
+    entry.encrypted ||
+    !matchesCollection(def.collection, collectionOf(key)) ||
+    holdsPoisonedField(def, entry.value)
       ? undefined
       : fieldValues(def, entry.value);
 
@@ -802,6 +830,8 @@ export async function createKV(file, { indexes: declared = [] } = {}) {
         details,
       );
     if (op.type !== "set") return;
+    if (defs.some((def) => holdsPoisonedField(def, op.value)))
+      throw invalid("Indexed strings must not contain U+0000", details);
     if (op.encrypted === true)
       throw new KVError(
         "INDEX_FIELD_ENCRYPTED",
@@ -1064,8 +1094,9 @@ export async function createKV(file, { indexes: declared = [] } = {}) {
       const entry = liveEntry(checkStore(storeId), String(key));
       return entry ? toEntry(String(key), entry) : null;
     },
-    async getMany(storeId, keys) {
+    async getMany(storeId, rawKeys) {
       const store = checkStore(storeId);
+      const keys = Array.isArray(rawKeys) ? rawKeys.map(String) : rawKeys;
       checkBatchKeys(keys);
       return keys.map((key) => {
         const entry = liveEntry(store, key);
