@@ -2637,3 +2637,97 @@ td {
 .hero-note {
   color: #748169;
 }
+/* Phone and small tablet: each project row is a card, and each cell shows
+   its column name, so no column is out of view. */
+@media (max-width: 760px) {
+  .table-wrap {
+    overflow: visible;
+  }
+  .table-wrap table,
+  .table-wrap tbody,
+  .table-wrap tr,
+  .table-wrap td {
+    display: block;
+  }
+  .table-wrap table {
+    white-space: normal;
+  }
+  .table-wrap thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .table-wrap tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px 16px;
+    padding: 18px 19px;
+    border-bottom: 1px solid #eeeee5;
+  }
+  .table-wrap tbody tr:last-child {
+    border-bottom: 0;
+  }
+  .table-wrap td {
+    padding: 0;
+    border: 0;
+    min-width: 0;
+  }
+  .table-wrap .name-cell,
+  .table-wrap .manage-cell {
+    grid-column: 1 / -1;
+  }
+  .table-wrap .project-cell small {
+    max-width: none;
+    white-space: normal;
+  }
+  .table-wrap td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 6px;
+    font-size: 9px;
+    font-weight: 500;
+    color: #748169;
+  }
+  .table-wrap .progress progress {
+    min-width: 0;
+    flex: 1;
+  }
+}
+@media (min-width: 561px) and (max-width: 760px) {
+  .table-wrap tbody tr {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+/* Narrow desktop: the table wraps its text so every column fits. */
+@media (min-width: 761px) and (max-width: 1140px) {
+  .table-wrap table {
+    white-space: normal;
+  }
+  .table-wrap th,
+  .table-wrap td {
+    padding-inline: 14px;
+  }
+  .table-wrap .project-cell small {
+    max-width: none;
+  }
+  .table-wrap .status,
+  .table-wrap .progress,
+  .table-wrap td[data-label="Target date"] {
+    white-space: nowrap;
+  }
+  .table-wrap progress {
+    width: 44px;
+  }
+}
+/* Very narrow phones: the four navigation links fit without their icons. */
+@media (max-width: 380px) {
+  .sidebar nav a {
+    min-width: 0;
+    padding: 10px 4px;
+  }
+  .sidebar nav a svg {
+    display: none;
+  }
+}

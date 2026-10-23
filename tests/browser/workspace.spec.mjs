@@ -120,6 +120,23 @@ test("mobile: usable navigation, dialog, no horizontal page overflow", async ({
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await shot(page, "dashboard-mobile");
   expect(await noOverflow(page)).toBe(true);
+  // Each project is a card: every cell, the status chip too, is in view.
+  const hidden = await page.evaluate(() => {
+    const box = document.querySelector("#overview-table").getBoundingClientRect();
+    return [...document.querySelectorAll("#overview-table td, #overview-table .status")]
+      .filter((el) => {
+        const r = el.getBoundingClientRect();
+        return !r.width || r.left < box.left || r.right > box.right + 0.5;
+      })
+      .map((el) => el.textContent);
+  });
+  expect(hidden).toEqual([]);
+  await expect(
+    page.locator('#overview-table td[data-label="Owner"]').first(),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 844 });
+  expect(await noOverflow(page)).toBe(true);
+  await page.setViewportSize(phone);
   await page.getByRole("button", { name: "New project", exact: true }).click();
   await expect(page.getByLabel("Project name", { exact: true })).toBeFocused();
   await page.keyboard.press("Escape");
@@ -444,4 +461,50 @@ test("activity loads more entries with the cursor", async ({ page }) => {
     "Jamie Chen created An older project",
   );
   await expect(more).toBeHidden();
+});
+
+test("a failed read shows the connection copy, not the may-have-been-saved copy", async ({
+  page,
+}) => {
+  const offline = "Could not connect. Check your connection and try again.";
+  await page.setViewportSize(desktop);
+  // The first page load: the session read fails.
+  await page.route("**/api/session", (route) =>
+    route.request().method() === "GET" ? route.abort("failed") : route.continue(),
+  );
+  await page.goto("/app");
+  await expect(page.locator("#login-error")).toHaveText(offline);
+  await page.unroute("**/api/session");
+  await page.getByRole("button", { name: "Enter demo workspace" }).click();
+  await expect(page.locator("#stat-total")).toHaveText("8");
+  // A filter change: the list read fails.
+  await page.route(/\/api\/projects\?status=/, (route) => route.abort("failed"));
+  await page.locator('[data-view="projects"]').click();
+  await page
+    .getByRole("combobox", { name: "Filter by status" })
+    .selectOption("active");
+  await expect(page.locator("#notice")).toHaveText(offline);
+  await expect(page.locator("#notice")).toHaveAttribute("role", "alert");
+});
+
+test("a create that fails twice tells the person to reload and check", async ({
+  page,
+}) => {
+  await signIn(page);
+  let posts = 0;
+  await page.route("**/api/projects", (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    posts += 1;
+    return route.abort("failed");
+  });
+  await page.getByRole("button", { name: "New project", exact: true }).click();
+  await page.getByLabel("Project name", { exact: true }).fill("Never saved");
+  await page.getByRole("button", { name: "Save project" }).click();
+  await expect(page.locator("#project-error")).toHaveText(
+    "Could not connect. Your project may have been created. Reload the page to check before you save it again.",
+  );
+  expect(posts).toBe(2);
+  await expect(page.getByLabel("Project name", { exact: true })).toHaveValue(
+    "Never saved",
+  );
 });

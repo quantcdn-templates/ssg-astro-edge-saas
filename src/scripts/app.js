@@ -27,6 +27,8 @@ const COPY = {
   offline: "Could not connect. Check your connection and try again.",
   uncertain:
     "Could not connect. Your change may have been saved. Reload the page to check before you try again.",
+  createUncertain:
+    "Could not connect. Your project may have been created. Reload the page to check before you save it again.",
 };
 const escape = (value) =>
   String(value ?? "").replace(
@@ -90,6 +92,10 @@ function showLogin() {
 // An error from the API carries its HTTP status and body.
 const apiError = (message, status = 0, body = {}) =>
   Object.assign(new Error(message), { status, body });
+// A failed read or sign-in changed nothing. A failed PATCH or DELETE may
+// have been saved, so the person must reload and check.
+const writeError = (method) =>
+  ["PATCH", "DELETE"].includes(method) ? COPY.uncertain : COPY.offline;
 // Only a create is sent again after a network failure: it has the same
 // request ID, so the API writes it at most once. A PATCH or DELETE is never
 // sent again, because the outcome of the first attempt is not known.
@@ -97,12 +103,14 @@ async function send(path, init, retry) {
   try {
     return await fetch(`/api${path}`, init);
   } catch {
-    if (retry) return send(path, init, false);
-    throw apiError(init.method === "POST" ? COPY.offline : COPY.uncertain);
+    if (!retry) throw apiError(writeError(init.method));
+  }
+  try {
+    return await fetch(`/api${path}`, init);
+  } catch {
+    throw apiError(COPY.createUncertain);
   }
 }
-const writeError = (method) =>
-  ["PATCH", "DELETE"].includes(method) ? COPY.uncertain : COPY.offline;
 function requestInit({ requestId, retry, ...rest }) {
   return {
     ...rest,
@@ -160,11 +168,12 @@ function setBusy(busy, label = "Saving changes…") {
 }
 
 // ---- Rendering.
+// Each cell carries its column name, so the phone layout can label it.
 function projectRow(p, i, canEdit) {
   const manage = canEdit
-    ? `<td><button class="edit-project" data-id="${escape(p.id)}" aria-label="Edit ${escape(p.name)}">Edit ↗</button></td>`
+    ? `<td class="manage-cell"><button class="edit-project" data-id="${escape(p.id)}" aria-label="Edit ${escape(p.name)}">Edit ↗</button></td>`
     : "";
-  return `<tr><td><div class="project-cell"><span class="project-mark" aria-hidden="true">${["◈", "▧", "✳", "◉"][i % 4]}</span><div><strong>${escape(p.name)}</strong><small>${escape(p.description)}</small></div></div></td><td><span class="status ${escape(p.status)}">${escape(labels[p.status])}</span></td><td><div class="progress"><progress max="100" value="${Number(p.progress)}" aria-label="${escape(p.name)} progress"></progress>${Number(p.progress)}%</div></td><td><span class="mini-avatar">${escape(initials(p.owner))}</span>${escape(p.owner)}</td><td>${escape(date(p.due))}</td>${manage}</tr>`;
+  return `<tr><td class="name-cell"><div class="project-cell"><span class="project-mark" aria-hidden="true">${["◈", "▧", "✳", "◉"][i % 4]}</span><div><strong>${escape(p.name)}</strong><small>${escape(p.description)}</small></div></div></td><td data-label="Status"><span class="status ${escape(p.status)}">${escape(labels[p.status])}</span></td><td data-label="Progress"><div class="progress"><progress max="100" value="${Number(p.progress)}" aria-label="${escape(p.name)} progress"></progress>${Number(p.progress)}%</div></td><td data-label="Owner"><span class="mini-avatar">${escape(initials(p.owner))}</span>${escape(p.owner)}</td><td data-label="Target date">${escape(date(p.due))}</td>${manage}</tr>`;
 }
 function table(projects) {
   if (!projects.length)
@@ -213,6 +222,9 @@ function renderProgress(current) {
   $("stat-progress").innerHTML = `${overall}<small>%</small>`;
   $("overall-meter").style.width = `${overall}%`;
   const partial = state.overviewHasMore;
+  $("focus-eyebrow").textContent = partial
+    ? "NEXT IN THE LOADED PROJECTS"
+    : "NEXT ON THE HORIZON";
   $("progress-scope").textContent = partial
     ? "Across loaded non-archived projects"
     : "Across non-archived projects";
@@ -651,6 +663,7 @@ async function loadLatestProject() {
     render();
     $("project-error").textContent =
       "Someone else deleted this project. Close this dialog to see the current list.";
+    $("close-dialog").focus();
     return;
   }
   fillProject(latest);
