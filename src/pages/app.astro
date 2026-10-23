@@ -187,7 +187,7 @@ const isLocal = import.meta.env.DEV;
               </div><strong id="stat-progress">0<small>%</small></strong><div
                 class="stat-bottom"
               >
-                <small>Across non-archived projects</small><span
+                <small id="progress-scope">Across non-archived projects</small><span
                   class="stat-number">04</span>
               </div><div class="stat-meter"><i id="overall-meter"></i></div>
             </article>
@@ -200,7 +200,9 @@ const isLocal = import.meta.env.DEV;
                     Progress in perspective.
                   </h2>
                 </div><span class="subtle-chip"
-                  ><i class="dot orange"></i>Latest projects</span>
+                  ><i class="dot orange"></i><span id="chart-scope"
+                    >Latest projects</span
+                  ></span>
               </div>
               <div class="chart-layout">
                 <div class="chart-axis" aria-hidden="true">
@@ -255,7 +257,6 @@ const isLocal = import.meta.env.DEV;
               >
             </div><div id="overview-table"></div>
           </section>
-          <p class="small muted" id="overview-scope"></p>
         </section>
         <section id="projects-view" class="view" hidden>
           <div class="panel">
@@ -273,11 +274,13 @@ const isLocal = import.meta.env.DEV;
                 ><option value="planned">Planned</option><option
                   value="complete">Complete</option
                 ><option value="archived">Archived</option></select
+              ><select id="owner-filter" aria-label="Filter by owner"
+                ><option value="">Anyone</option></select
               ><span id="result-count" class="muted small"></span>
             </div><div id="projects-table"></div><div class="load-row">
               <button id="load-more" class="button" hidden
                 >Load more projects</button
-              ><span id="list-scope" class="small muted"></span>
+              >
             </div>
           </div>
         </section>
@@ -286,10 +289,15 @@ const isLocal = import.meta.env.DEV;
             <div class="panel-heading">
               <div>
                 <h2>The latest moves</h2><p>
-                  Latest update to each loaded project, most recent first.
+                  Every change to your projects, most recent first. Changes
+                  stay here for 90 days.
                 </p>
               </div>
-            </div><div id="activity-list"></div>
+            </div><div id="activity-list"></div><div class="load-row">
+              <button id="activity-more" class="button" hidden
+                >Load more activity</button
+              >
+            </div>
           </div>
         </section>
         <section id="settings-view" class="view" hidden>
@@ -310,9 +318,18 @@ const isLocal = import.meta.env.DEV;
               class="error"
               role="alert"
             >
-            </p><button class="button primary" type="submit"
-              >Save changes</button
-            ><p class="muted small" id="settings-access"></p>
+            </p><p id="settings-note" class="small muted" role="status"></p><div
+              class="form-actions"
+            >
+              <button
+                id="settings-load-latest"
+                class="button"
+                type="button"
+                hidden>Load the latest version</button
+              ><button class="button primary" type="submit"
+                >Save changes</button
+              >
+            </div><p class="muted small" id="settings-access"></p>
           </form>
         </section>
         <footer class="app-footer">
@@ -338,7 +355,10 @@ const isLocal = import.meta.env.DEV;
           id="close-dialog"
           aria-label="Close dialog">×</button
         >
-      </div><input type="hidden" name="id" /><label for="project-name"
+      </div><input type="hidden" name="id" /><input
+        type="hidden"
+        name="version"
+      /><label for="project-name"
         >Project name</label
       ><input
         id="project-name"
@@ -346,7 +366,8 @@ const isLocal = import.meta.env.DEV;
         required
         maxlength="100"
         placeholder="Your next big thing"
-      /><label for="project-description">Description</label><textarea
+        aria-describedby="project-name-error"
+      /><p id="project-name-error" class="error" role="alert"></p><label for="project-description">Description</label><textarea
         id="project-description"
         name="description"
         maxlength="500"
@@ -395,9 +416,14 @@ const isLocal = import.meta.env.DEV;
         step="1"
         value="0"
         required
-      /><p id="project-error" class="error" role="alert"></p><div
-        class="dialog-actions"
+      /><p id="project-error" class="error" role="alert"></p><p
+        id="project-note"
+        class="small muted"
+        role="status"
       >
+      </p><button id="load-latest" class="button" type="button" hidden
+        >Load the latest version</button
+      ><div class="dialog-actions">
         <button id="delete-project" class="button danger" type="button" hidden
           >Delete project</button
         ><button class="button primary" type="submit">Save project</button>

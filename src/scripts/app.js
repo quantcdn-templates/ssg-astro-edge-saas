@@ -1,12 +1,32 @@
 const $ = (id) => document.getElementById(id);
+const STATUSES = ["planned", "active", "complete", "archived"];
 const state = {
   user: null,
   settings: {},
+  settingsVersion: null,
+  // The Projects view: one list for the current filters, newest first.
   projects: [],
   cursor: null,
   hasMore: false,
+  filters: { status: "", owner: "" },
+  listRequest: 0,
+  // The overview: the unfiltered pages loaded so far.
+  overview: [],
+  overviewHasMore: false,
+  // Owner names seen in loaded data, by owner key, for the owner filter.
+  owners: new Map(),
+  summary: { counts: {}, total: 0 },
+  activity: [],
+  activityCursor: null,
+  activityHasMore: false,
   busy: false,
   loaded: false,
+};
+const COPY = {
+  duplicate: "A project with this name already exists.",
+  offline: "Could not connect. Check your connection and try again.",
+  uncertain:
+    "Could not connect. Your change may have been saved. Reload the page to check before you try again.",
 };
 const escape = (value) =>
   String(value ?? "").replace(
@@ -29,6 +49,7 @@ const labels = {
   complete: "Complete",
   archived: "Archived",
 };
+const actions = { created: "created", updated: "updated", deleted: "deleted" };
 const date = (value) =>
   value
     ? new Date(`${value}T12:00:00`).toLocaleDateString(undefined, {
@@ -36,6 +57,17 @@ const date = (value) =>
         day: "numeric",
       })
     : "No date";
+const time = (value) =>
+  new Date(value).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+const newestFirst = (list) =>
+  [...list].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+const ownerKeyOf = (p) => p.ownerKey || p.owner.trim().toLowerCase();
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const announce = (message, error = false) => {
   $("notice").textContent = message;
   $("notice").hidden = !message;
@@ -45,111 +77,160 @@ function showLogin() {
   document.querySelector(".skip-link").setAttribute("href", "#main");
   state.user = null;
   state.projects = [];
+  state.overview = [];
+  state.owners = new Map();
   state.loaded = false;
   $("workspace").hidden = true;
   $("login").hidden = false;
   $("project-dialog").close();
   $("access-key").focus();
 }
-async function api(path, options = {}) {
-  let response;
+
+// ---- API client.
+// An error from the API carries its HTTP status and body.
+const apiError = (message, status = 0, body = {}) =>
+  Object.assign(new Error(message), { status, body });
+// Only a create is sent again after a network failure: it has the same
+// request ID, so the API writes it at most once. A PATCH or DELETE is never
+// sent again, because the outcome of the first attempt is not known.
+async function send(path, init, retry) {
   try {
-    response = await fetch(`/api${path}`, {
-      ...options,
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json", ...options.headers },
-    });
+    return await fetch(`/api${path}`, init);
   } catch {
-    throw new Error("Could not connect. Check your connection and try again.");
+    if (retry) return send(path, init, false);
+    throw apiError(init.method === "POST" ? COPY.offline : COPY.uncertain);
   }
-  let data;
+}
+const writeError = (method) =>
+  ["PATCH", "DELETE"].includes(method) ? COPY.uncertain : COPY.offline;
+function requestInit({ requestId, retry, ...rest }) {
+  return {
+    ...rest,
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      ...(requestId ? { "X-Request-Id": requestId } : {}),
+      ...rest.headers,
+    },
+  };
+}
+async function readJson(response, method) {
   try {
-    data = await response.json();
+    return await response.json();
   } catch {
-    throw new Error(
-      "The workspace API is unavailable. Check that /api/* is connected to the edge function.",
+    throw apiError(
+      method === "GET"
+        ? "The workspace API is unavailable. Check that /api/* is connected to the edge function."
+        : writeError(method),
     );
   }
-  if (!response.ok) {
-    if (
-      response.status === 401 &&
-      !(path === "/session" && options.method === "POST")
-    )
-      showLogin();
-    throw new Error(data.error || "Something went wrong. Please try again.");
-  }
-  return data;
 }
-function setBusy(busy) {
+async function api(path, options = {}) {
+  const init = requestInit(options);
+  const method = init.method || "GET";
+  const response = await send(path, init, options.retry === true);
+  const data = await readJson(response, method);
+  if (response.ok) return data;
+  if (response.status === 401 && !(path === "/session" && method === "POST"))
+    showLogin();
+  throw apiError(
+    data.error || "Something went wrong. Please try again.",
+    response.status,
+    data,
+  );
+}
+// Each create, update and delete has its own request ID.
+const write = (path, method, body) =>
+  api(path, {
+    method,
+    requestId: crypto.randomUUID(),
+    retry: method === "POST",
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+function setBusy(busy, label = "Saving changes…") {
   state.busy = busy;
   document
     .querySelectorAll(
-      "#project-form button, #settings-form button, #new-project, #load-more, .edit-project",
+      "#project-form button, #settings-form button, #new-project, #load-more, #activity-more, .edit-project",
     )
     .forEach((button) => {
       button.disabled = busy;
     });
-  $("save-state").textContent = busy
-    ? "Saving changes…"
-    : "Workspace connected";
+  $("save-state").textContent = busy ? label : "Workspace connected";
+}
+
+// ---- Rendering.
+function projectRow(p, i, canEdit) {
+  const manage = canEdit
+    ? `<td><button class="edit-project" data-id="${escape(p.id)}" aria-label="Edit ${escape(p.name)}">Edit ↗</button></td>`
+    : "";
+  return `<tr><td><div class="project-cell"><span class="project-mark" aria-hidden="true">${["◈", "▧", "✳", "◉"][i % 4]}</span><div><strong>${escape(p.name)}</strong><small>${escape(p.description)}</small></div></div></td><td><span class="status ${escape(p.status)}">${escape(labels[p.status])}</span></td><td><div class="progress"><progress max="100" value="${Number(p.progress)}" aria-label="${escape(p.name)} progress"></progress>${Number(p.progress)}%</div></td><td><span class="mini-avatar">${escape(initials(p.owner))}</span>${escape(p.owner)}</td><td>${escape(date(p.due))}</td>${manage}</tr>`;
 }
 function table(projects) {
   if (!projects.length)
     return '<div class="empty"><h3>A little room for something new.</h3><p>No projects to show. Try another filter or create your first project.</p></div>';
   const canEdit = state.user.role === "owner";
-  return `<div class="table-wrap"><table><thead><tr><th scope="col">Project name</th><th scope="col">Status</th><th scope="col">Progress</th><th scope="col">Owner</th><th scope="col">Target date</th>${canEdit ? '<th scope="col"><span class="muted">Manage</span></th>' : ""}</tr></thead><tbody>${projects.map((p, i) => `<tr><td><div class="project-cell"><span class="project-mark" aria-hidden="true">${["◈", "▧", "✳", "◉"][i % 4]}</span><div><strong>${escape(p.name)}</strong><small>${escape(p.description)}</small></div></div></td><td><span class="status ${escape(p.status)}">${escape(labels[p.status])}</span></td><td><div class="progress"><progress max="100" value="${Number(p.progress)}" aria-label="${escape(p.name)} progress"></progress>${Number(p.progress)}%</div></td><td><span class="mini-avatar">${escape(initials(p.owner))}</span>${escape(p.owner)}</td><td>${escape(date(p.due))}</td>${canEdit ? `<td><button class="edit-project" data-id="${escape(p.id)}" aria-label="Edit ${escape(p.name)}">Edit ↗</button></td>` : ""}</tr>`).join("")}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th scope="col">Project name</th><th scope="col">Status</th><th scope="col">Progress</th><th scope="col">Owner</th><th scope="col">Target date</th>${canEdit ? '<th scope="col"><span class="muted">Manage</span></th>' : ""}</tr></thead><tbody>${projects.map((p, i) => projectRow(p, i, canEdit)).join("")}</tbody></table></div>`;
+}
+function renderOwners() {
+  const select = $("owner-filter");
+  const owners = [...state.owners].sort((a, b) => a[1].localeCompare(b[1]));
+  select.innerHTML = `<option value="">Anyone</option>${owners.map(([key, name]) => `<option value="${escape(key)}">${escape(name)}</option>`).join("")}`;
+  select.value = state.filters.owner;
 }
 function renderProjects() {
   const query = $("project-search").value.toLowerCase().trim();
-  const status = $("status-filter").value;
-  const projects = state.projects.filter(
-    (p) =>
-      (status === "all" || p.status === status) &&
-      `${p.name} ${p.owner} ${p.description}`.toLowerCase().includes(query),
+  const projects = newestFirst(state.projects).filter((p) =>
+    `${p.name} ${p.owner} ${p.description}`.toLowerCase().includes(query),
   );
   $("projects-table").innerHTML = table(projects);
-  $("result-count").textContent =
-    `${projects.length} project${projects.length === 1 ? "" : "s"}`;
+  $("result-count").textContent = state.hasMore
+    ? `${plural(projects.length, "project")} loaded · more to load`
+    : plural(projects.length, "project");
+  $("load-more").hidden = !state.hasMore;
 }
-function render() {
-  const sorted = [...state.projects].sort((a, b) =>
-    b.updatedAt.localeCompare(a.updatedAt),
-  );
-  const active = sorted.filter((p) => p.status === "active");
-  const current = sorted.filter((p) => p.status !== "archived");
-  $("nav-count").textContent = String(sorted.length);
-  $("stat-total").textContent = String(sorted.length);
-  $("stat-active").textContent = String(active.length);
-  $("stat-complete").textContent = String(
-    sorted.filter((p) => p.status === "complete").length,
-  );
-  $("stat-progress").innerHTML =
-    `${current.length ? Math.round(current.reduce((sum, p) => sum + p.progress, 0) / current.length) : 0}<small>%</small>`;
-  const overall = current.length
-    ? Math.round(
-        current.reduce((sum, p) => sum + p.progress, 0) / current.length,
-      )
-    : 0;
-  $("overall-meter").style.width = `${overall}%`;
-  $("welcome-summary").textContent = active.length
-    ? `${active.length} active projects. A world of possibility. Let's make a little progress today.`
+// The counts come from the API, so they cover every indexed project.
+function renderStats() {
+  const { counts, total } = state.summary;
+  $("nav-count").textContent = String(total);
+  $("stat-total").textContent = String(total);
+  $("stat-active").textContent = String(counts.active || 0);
+  $("stat-complete").textContent = String(counts.complete || 0);
+  $("welcome-summary").textContent = counts.active
+    ? `${plural(counts.active, "active project")}. A world of possibility. Let's make a little progress today.`
     : "Your ideas, your people, your next big thing. All in orbit.";
+}
+function chartColumn(p) {
+  const value = p.progress >= 20 ? `<span class="chart-value">${p.progress}</span>` : "";
+  return `<div class="chart-column" tabindex="0" role="img" aria-label="${escape(p.name)}: ${p.progress}% complete"><span class="chart-tooltip">${escape(p.name)} · ${p.progress}%</span><div class="chart-track"><div class="chart-bar ${escape(p.status)}" style="height:${p.progress}%">${value}</div></div><small>${escape(p.name)}</small></div>`;
+}
+// The chart, overall progress and next milestone use per-project data, so
+// they cover the loaded projects. The labels say so when more exist.
+function renderProgress(current) {
+  const overall = current.length
+    ? Math.round(current.reduce((sum, p) => sum + p.progress, 0) / current.length)
+    : 0;
+  $("stat-progress").innerHTML = `${overall}<small>%</small>`;
+  $("overall-meter").style.width = `${overall}%`;
+  const partial = state.overviewHasMore;
+  $("progress-scope").textContent = partial
+    ? "Across loaded non-archived projects"
+    : "Across non-archived projects";
+  $("chart-scope").textContent = partial
+    ? "Latest loaded projects"
+    : "Latest projects";
   const chart = current.slice(0, 6);
   $("progress-chart").innerHTML = chart.length
-    ? chart
-        .map(
-          (p) =>
-            `<div class="chart-column" tabindex="0" role="img" aria-label="${escape(p.name)}: ${p.progress}% complete"><span class="chart-tooltip">${escape(p.name)} · ${p.progress}%</span><div class="chart-track"><div class="chart-bar ${escape(p.status)}" style="height:${p.progress}%">${p.progress >= 20 ? `<span class="chart-value">${p.progress}</span>` : ""}</div></div><small>${escape(p.name)}</small></div>`,
-        )
-        .join("")
+    ? chart.map(chartColumn).join("")
     : '<div class="empty">Your next chapter starts with a project.</div>';
+}
+function renderFocus(active) {
   const next = active
     .filter((p) => p.due)
     .sort((a, b) => a.due.localeCompare(b.due))[0];
   $("focus-title").textContent = next ? next.name : "A new chapter awaits.";
   $("focus-copy").textContent = next
-    ? next.description ||
-      `A little closer with every step. Led by ${next.owner}.`
+    ? next.description || `A little closer with every step. Led by ${next.owner}.`
     : "Start a project and give your next idea a little room to grow.";
   $("focus-percent").textContent = next ? `${next.progress}%` : "—";
   $("focus-ring-value").style.strokeDashoffset = String(
@@ -158,22 +239,29 @@ function render() {
   $("focus-date").textContent = next
     ? `Target · ${date(next.due)}`
     : "Your next chapter";
+}
+function renderOverview() {
+  const sorted = newestFirst(state.overview);
+  renderStats();
+  renderProgress(sorted.filter((p) => p.status !== "archived"));
+  renderFocus(sorted.filter((p) => p.status === "active"));
   $("overview-table").innerHTML = table(sorted.slice(0, 4));
-  $("activity-list").innerHTML = sorted.length
-    ? sorted
-        .map(
-          (p) =>
-            `<article class="activity-row"><span class="avatar">${escape(initials(p.updatedBy))}</span><div><strong>${escape(p.updatedBy)}</strong> updated <strong>${escape(p.name)}</strong><p>${escape(labels[p.status])} · ${p.progress}% complete · ${escape(p.priority)} priority</p></div><time datetime="${escape(p.updatedAt)}">${escape(new Date(p.updatedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></article>`,
-        )
-        .join("")
+}
+function activityRow(entry) {
+  const p = entry.project;
+  return `<article class="activity-row"><span class="avatar">${escape(initials(entry.actor))}</span><div><strong>${escape(entry.actor)}</strong> ${escape(actions[entry.action] || "changed")} <strong>${escape(p.name)}</strong><p>${escape(labels[p.status])} · ${Number(p.progress)}% complete · ${escape(p.priority)} priority</p></div><time datetime="${escape(entry.at)}">${escape(time(entry.at))}</time></article>`;
+}
+function renderActivity() {
+  $("activity-list").innerHTML = state.activity.length
+    ? state.activity.map(activityRow).join("")
     : '<div class="empty">Updates will appear here as your projects take shape.</div>';
-  $("load-more").hidden = !state.hasMore;
-  const scope = state.hasMore
-    ? `Showing ${sorted.length} loaded projects. Load more in Projects to include the rest in your overview, search and activity.`
-    : `${sorted.length} projects · All workspace projects loaded`;
-  $("overview-scope").textContent = scope;
-  $("list-scope").textContent = scope;
+  $("activity-more").hidden = !state.activityHasMore;
+}
+function render() {
+  renderOverview();
+  renderOwners();
   renderProjects();
+  renderActivity();
 }
 function navigate() {
   const requested = location.hash.slice(1);
@@ -222,20 +310,65 @@ function navigate() {
   $("new-project").hidden =
     !state.user || state.user.role !== "owner" || view === "settings";
 }
+
+// ---- Loading.
+const merge = (list, items) => [
+  ...new Map([...list, ...items].map((p) => [p.id, p])).values(),
+];
+function rememberOwners(projects) {
+  for (const p of projects) state.owners.set(ownerKeyOf(p), p.owner.trim());
+}
+const filtered = () => Boolean(state.filters.status || state.filters.owner);
+function projectsPath(cursor) {
+  const params = new URLSearchParams();
+  if (state.filters.status) params.set("status", state.filters.status);
+  if (state.filters.owner) params.set("owner", state.filters.owner);
+  if (cursor) params.set("cursor", cursor);
+  const query = params.toString();
+  return `/projects${query ? `?${query}` : ""}`;
+}
+// A filter change starts a new list. Only the latest request updates it.
 async function loadProjects(more = false) {
-  const data = await api(
-    `/projects${more && state.cursor ? `?cursor=${encodeURIComponent(state.cursor)}` : ""}`,
-  );
-  state.projects = [
-    ...new Map(
-      [...(more ? state.projects : []), ...data.projects].map((p) => [p.id, p]),
-    ).values(),
-  ];
+  const request = ++state.listRequest;
+  const data = await api(projectsPath(more ? state.cursor : null));
+  if (request !== state.listRequest) return;
+  state.projects = merge(more ? state.projects : [], data.projects);
   state.cursor = data.cursor;
   state.hasMore = data.hasMore;
-  state.loaded = true;
+  rememberOwners(data.projects);
+  if (!filtered()) {
+    state.overview = state.projects;
+    state.overviewHasMore = state.hasMore;
+  }
   render();
-  navigate();
+}
+async function loadSummary() {
+  state.summary = await api("/projects/summary");
+}
+async function loadActivity(more = false) {
+  const cursor = more && state.activityCursor;
+  const data = await api(
+    `/activity${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+  );
+  state.activity = more ? [...state.activity, ...data.activity] : data.activity;
+  state.activityCursor = data.cursor;
+  state.activityHasMore = data.hasMore;
+}
+// After a change, the counts and the activity come from the API again.
+async function refreshAfterChange() {
+  try {
+    await Promise.all([loadSummary(), loadActivity()]);
+  } catch (e) {
+    announce(e.message, true);
+  }
+  render();
+}
+function showSettings(settings, version) {
+  state.settings = settings;
+  state.settingsVersion = version ?? null;
+  $("workspace-name").textContent = settings.name;
+  $("settings-name").value = settings.name;
+  $("settings-description").value = settings.description;
 }
 async function openWorkspace() {
   const session = await api("/session");
@@ -245,7 +378,6 @@ async function openWorkspace() {
     month: "short",
     day: "numeric",
   });
-  state.settings = session.settings;
   state.loaded = false;
   $("login").hidden = true;
   $("workspace").hidden = false;
@@ -255,9 +387,7 @@ async function openWorkspace() {
   $("user-avatar").textContent = $("top-avatar").textContent = initials(
     session.user.name,
   );
-  $("workspace-name").textContent = session.settings.name;
-  $("settings-name").value = session.settings.name;
-  $("settings-description").value = session.settings.description;
+  showSettings(session.settings, session.settingsVersion);
   $("settings-access").textContent =
     `Signed in as ${session.user.name} · ${session.user.role} access`;
   document
@@ -272,7 +402,10 @@ async function openWorkspace() {
   announce("");
   navigate();
   try {
-    await loadProjects();
+    await Promise.all([loadProjects(), loadSummary(), loadActivity()]);
+    state.loaded = true;
+    render();
+    navigate();
     $("dashboard").focus({ preventScroll: true });
     window.scrollTo(0, 0);
   } catch (e) {
@@ -327,41 +460,80 @@ $("retry").addEventListener("click", async () => {
     announce(e.message, true);
   }
 });
-$("load-more").addEventListener("click", async () => {
-  $("load-more").disabled = true;
+async function loadMore(button, load) {
+  button.disabled = true;
   try {
-    await loadProjects(true);
+    await load();
     announce("");
   } catch (e) {
     announce(e.message, true);
   } finally {
-    $("load-more").disabled = false;
+    button.disabled = false;
   }
-});
-$("project-search").addEventListener("input", renderProjects);
-$("status-filter").addEventListener("change", renderProjects);
-window.addEventListener("hashchange", navigate);
-function edit(project) {
-  $("project-form").reset();
-  const values = project || {
-    id: "",
-    name: "",
-    description: "",
-    owner: state.user.name,
-    due: "",
-    status: "planned",
-    priority: "medium",
-    progress: 0,
+}
+$("load-more").addEventListener("click", () =>
+  loadMore($("load-more"), () => loadProjects(true)),
+);
+$("activity-more").addEventListener("click", () =>
+  loadMore($("activity-more"), async () => {
+    await loadActivity(true);
+    renderActivity();
+  }),
+);
+async function changeFilter() {
+  state.filters = {
+    status: $("status-filter").value === "all" ? "" : $("status-filter").value,
+    owner: $("owner-filter").value,
   };
+  state.cursor = null;
+  state.hasMore = false;
+  try {
+    await loadProjects();
+    announce("");
+  } catch (e) {
+    announce(e.message, true);
+  }
+}
+$("project-search").addEventListener("input", renderProjects);
+$("status-filter").addEventListener("change", changeFilter);
+$("owner-filter").addEventListener("change", changeFilter);
+window.addEventListener("hashchange", navigate);
+
+// ---- The project dialog.
+const projectField = (name) => $("project-form").elements.namedItem(name);
+function clearProjectMessages() {
+  $("project-error").textContent = "";
+  $("project-name-error").textContent = "";
+  $("project-name").removeAttribute("aria-invalid");
+  $("project-note").textContent = "";
+  $("load-latest").hidden = true;
+}
+function fillProject(values) {
   Object.entries(values).forEach(([key, value]) => {
-    const field = $("project-form").elements.namedItem(key);
+    const field = projectField(key);
     if (field) field.value = value;
   });
+}
+function edit(project) {
+  $("project-form").reset();
+  fillProject(
+    project || {
+      id: "",
+      version: "",
+      name: "",
+      description: "",
+      owner: state.user.name,
+      due: "",
+      status: "planned",
+      priority: "medium",
+      progress: 0,
+    },
+  );
   $("dialog-title").textContent = project
     ? "A little fine-tuning."
     : "Start something good.";
   $("delete-project").hidden = !project;
-  $("project-error").textContent = "";
+  clearProjectMessages();
   $("project-dialog").showModal();
   $("project-name").focus();
 }
@@ -375,24 +547,52 @@ $("close-dialog").addEventListener("click", () => $("project-dialog").close());
 $("project-dialog").addEventListener("cancel", (e) => {
   if (state.busy) e.preventDefault();
 });
+const matchesFilters = (p) =>
+  (!state.filters.status || p.status === state.filters.status) &&
+  (!state.filters.owner || ownerKeyOf(p) === state.filters.owner);
+// Show a saved project at once: the filtered lists are eventual on the edge.
+function storeProject(project) {
+  const others = (list) => list.filter((p) => p.id !== project.id);
+  state.projects = matchesFilters(project)
+    ? [...others(state.projects), project]
+    : others(state.projects);
+  state.overview = [...others(state.overview), project];
+  rememberOwners([project]);
+}
+function forgetProject(id) {
+  state.projects = state.projects.filter((p) => p.id !== id);
+  state.overview = state.overview.filter((p) => p.id !== id);
+}
+// A 409 keeps the dialog open and the person's input in the form.
+function showProjectError(error, editing) {
+  if (error.status === 409 && error.message === COPY.duplicate) {
+    $("project-name-error").textContent = error.message;
+    $("project-name").setAttribute("aria-invalid", "true");
+    $("project-name").focus();
+    return;
+  }
+  $("project-error").textContent = error.message;
+  $("load-latest").hidden = !(error.status === 409 && editing);
+}
+function projectBody(form) {
+  const body = Object.fromEntries(new FormData(form));
+  delete body.id;
+  body.progress = Number(body.progress);
+  return body;
+}
 $("project-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (state.busy) return;
-  const form = Object.fromEntries(new FormData(e.target));
-  const id = form.id;
-  delete form.id;
-  form.progress = Number(form.progress);
+  const id = projectField("id").value;
+  const body = projectBody(e.target);
+  if (!id) delete body.version;
   setBusy(true);
-  $("project-error").textContent = "";
+  clearProjectMessages();
   try {
-    const { project } = await api(id ? `/projects/${id}` : "/projects", {
-      method: id ? "PATCH" : "POST",
-      body: JSON.stringify(form),
-    });
-    state.projects = [
-      ...state.projects.filter((p) => p.id !== project.id),
-      project,
-    ];
+    const { project } = id
+      ? await write(`/projects/${id}`, "PATCH", body)
+      : await write("/projects", "POST", body);
+    storeProject(project);
     render();
     $("project-dialog").close();
     announce(
@@ -400,43 +600,116 @@ $("project-form").addEventListener("submit", async (e) => {
         ? "Project updated. A little progress, made."
         : "Your new project is ready to go.",
     );
-  } catch (e) {
-    $("project-error").textContent = e.message;
+    await refreshAfterChange();
+  } catch (error) {
+    showProjectError(error, Boolean(id));
   } finally {
     setBusy(false);
   }
 });
 $("delete-project").addEventListener("click", async () => {
-  const id = $("project-form").elements.namedItem("id").value;
+  const id = projectField("id").value;
+  const version = projectField("version").value;
   if (!confirm("Delete this project? This cannot be undone.")) return;
   setBusy(true);
+  clearProjectMessages();
   try {
-    await api(`/projects/${id}`, { method: "DELETE" });
-    state.projects = state.projects.filter((p) => p.id !== id);
+    await write(
+      `/projects/${id}?version=${encodeURIComponent(version)}`,
+      "DELETE",
+    );
+    forgetProject(id);
     render();
     $("project-dialog").close();
     announce("Project deleted.");
-  } catch (e) {
-    $("project-error").textContent = e.message;
+    await refreshAfterChange();
+  } catch (error) {
+    showProjectError(error, true);
   } finally {
     setBusy(false);
   }
 });
+// The default list is strong, so the latest version is in one of its pages.
+async function findProject(id) {
+  let cursor = null;
+  do {
+    const data = await api(
+      `/projects${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+    );
+    const found = data.projects.find((p) => p.id === id);
+    if (found) return found;
+    cursor = data.hasMore ? data.cursor : null;
+  } while (cursor);
+  return null;
+}
+async function loadLatestProject() {
+  const id = projectField("id").value;
+  const latest = await findProject(id);
+  clearProjectMessages();
+  if (!latest) {
+    forgetProject(id);
+    render();
+    $("project-error").textContent =
+      "Someone else deleted this project. Close this dialog to see the current list.";
+    return;
+  }
+  fillProject(latest);
+  storeProject(latest);
+  render();
+  $("project-note").textContent =
+    "This is the latest version. Make your change again, then save.";
+  $("project-name").focus();
+}
+$("load-latest").addEventListener("click", async () => {
+  setBusy(true, "Loading the latest version…");
+  try {
+    await loadLatestProject();
+  } catch (error) {
+    $("project-error").textContent = error.message;
+  } finally {
+    setBusy(false);
+  }
+});
+
+// ---- Settings.
+function clearSettingsMessages() {
+  $("settings-error").textContent = "";
+  $("settings-note").textContent = "";
+  $("settings-load-latest").hidden = true;
+}
 $("settings-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (state.busy) return;
   setBusy(true);
-  $("settings-error").textContent = "";
+  clearSettingsMessages();
   try {
-    const { settings } = await api("/settings", {
+    const { settings, version } = await api("/settings", {
       method: "PATCH",
-      body: JSON.stringify(Object.fromEntries(new FormData(e.target))),
+      body: JSON.stringify({
+        ...Object.fromEntries(new FormData(e.target)),
+        version: state.settingsVersion,
+      }),
     });
-    state.settings = settings;
-    $("workspace-name").textContent = settings.name;
+    showSettings(settings, version);
     announce("Workspace details saved.");
-  } catch (e) {
-    $("settings-error").textContent = e.message;
+  } catch (error) {
+    $("settings-error").textContent = error.message;
+    $("settings-load-latest").hidden = error.status !== 409;
+  } finally {
+    setBusy(false);
+  }
+});
+$("settings-load-latest").addEventListener("click", async () => {
+  setBusy(true, "Loading the latest version…");
+  try {
+    const session = await api("/session");
+    clearSettingsMessages();
+    showSettings(session.settings, session.settingsVersion);
+    $("settings-note").textContent =
+      "These are the latest settings. Make your change again, then save.";
+    $("settings-name").focus();
+  } catch (error) {
+    $("settings-error").textContent = error.message;
   } finally {
     setBusy(false);
   }

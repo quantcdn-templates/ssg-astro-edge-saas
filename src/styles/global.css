@@ -1238,6 +1238,21 @@ progress::-webkit-progress-value {
 .settings button {
   margin-top: 22px;
 }
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.form-actions .button {
+  margin-top: 22px;
+}
+#project-note:not(:empty),
+#settings-note:not(:empty) {
+  margin: 12px 0;
+}
+#load-latest {
+  margin-top: 4px;
+}
 .activity-row {
   display: flex;
   gap: 15px;
