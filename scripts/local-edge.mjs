@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
-import { createKV } from "./kv.mjs";
+import { createKV, indexesFromMeta } from "./kv.mjs";
 import { seed } from "./seed.mjs";
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 export function localEdge() {
@@ -15,8 +15,14 @@ export function localEdge() {
               {
                 name: "orbit-api",
                 async configureServer(server) {
+                  // quant/meta.json declares the indexes, locally as in Quant.
                   const kv = await createKV(
                     new URL("../.local/kv.json", import.meta.url).pathname,
+                    {
+                      indexes: await indexesFromMeta(
+                        new URL("../quant/meta.json", import.meta.url).pathname,
+                      ),
+                    },
                   );
                   await seed(kv);
                   server.middlewares.use(async (req, res, next) => {

@@ -104,6 +104,10 @@ export async function seed(kv) {
       createdAt: new Date(Date.now() - 14 * 86400000).toISOString(),
       updatedAt: new Date(Date.now() - i * 3600000).toISOString(),
       updatedBy: owner,
+      // The fields that the indexes in quant/meta.json read.
+      workspace: "studio",
+      nameKey: name.trim().toLowerCase(),
+      ownerKey: owner.trim().toLowerCase(),
     });
   }
   await kv.set(localStore, "seed:v1", true);
