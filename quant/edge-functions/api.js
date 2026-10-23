@@ -30,6 +30,8 @@ const COPY = {
   settingsConflict:
     "Someone else changed these settings. Reload them to see their change.",
   duplicate: "A project with this name already exists.",
+  // A create can conflict only with an earlier attempt of the same request.
+  created: "This project was already created. Reload to see it.",
   notReady: "The workspace is still being set up. Try again in a minute.",
   unavailable: "The workspace could not be reached. Please try again.",
   version: "A current version is required. Reload and try again.",
@@ -510,11 +512,15 @@ async function handle() {
 }
 // The KV errors that a person can act on. Every other error is a 503 with
 // the generic message; the KV message is never shown.
+function conflictCopy() {
+  if (route === "POST /api/projects") return COPY.created;
+  return path === "/api/settings" ? COPY.settingsConflict : COPY.conflict;
+}
 function kvErrorResponse(error) {
   if (error.code === "CONFLICT")
     return json(
       {
-        error: path === "/api/settings" ? COPY.settingsConflict : COPY.conflict,
+        error: conflictCopy(),
         ...(VERSION.test(error.currentVersion ?? "")
           ? { currentVersion: error.currentVersion }
           : {}),

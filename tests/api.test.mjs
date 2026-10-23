@@ -543,6 +543,39 @@ test("a create replayed with the same request ID writes once", async () => {
   assert.notEqual((await res.json()).project.id, first.body.project.id);
 });
 
+test("a create that races its own retry gets the already-created copy, not the edit-conflict copy", async () => {
+  const o = await orbit();
+  const headers = { "X-Request-Id": "race-0123456789abcdef" };
+  const first = await o.create({}, headers);
+  assert.equal(first.res.status, 201);
+  // The retry's pre-check runs before the first attempt is visible, and its
+  // commit reaches ifAbsent (as when the two operation lists differ).
+  const getEntry = o.kv.getEntry;
+  let missed = false;
+  o.kv.getEntry = async (s, key) => {
+    if (!missed && key.includes(":project:")) {
+      missed = true;
+      return null;
+    }
+    return getEntry(s, key);
+  };
+  const atomic = o.kv.atomic;
+  o.kv.atomic = (s) => {
+    const tx = atomic(s);
+    const commit = tx.commit;
+    tx.commit = () => commit();
+    return tx;
+  };
+  const again = await o.create({}, headers);
+  assert.equal(missed, true);
+  assert.equal(again.res.status, 409);
+  assert.equal(again.body.error, "This project was already created. Reload to see it.");
+  o.kv.getEntry = getEntry;
+  o.kv.atomic = atomic;
+  assert.equal((await o.get("/projects")).body.projects.length, 1);
+  assert.equal((await o.activity()).length, 1);
+});
+
 test("a replayed transaction returns the first result without a second write", async () => {
   const o = await orbit();
   const { body } = await o.create();
