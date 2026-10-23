@@ -1,3 +1,4 @@
+import { mergePage, placeProject } from "./merge.js";
 const $ = (id) => document.getElementById(id);
 const STATUSES = ["planned", "active", "complete", "archived"];
 const state = {
@@ -97,8 +98,9 @@ const apiError = (message, status = 0, body = {}) =>
 const writeError = (method) =>
   ["PATCH", "DELETE"].includes(method) ? COPY.uncertain : COPY.offline;
 // Only a create is sent again after a network failure: it has the same
-// request ID, so the API writes it at most once. A PATCH or DELETE is never
-// sent again, because the outcome of the first attempt is not known.
+// request ID, so the API gives it the same project id and writes it at most
+// once. A PATCH or DELETE is never sent again, because the outcome of the
+// first attempt is not known.
 async function send(path, init, retry) {
   try {
     return await fetch(`/api${path}`, init);
@@ -147,12 +149,13 @@ async function api(path, options = {}) {
     data,
   );
 }
-// Each create, update and delete has its own request ID.
+// Each create has its own request ID, and its retry sends the same one.
 const write = (path, method, body) =>
   api(path, {
     method,
-    requestId: crypto.randomUUID(),
-    retry: method === "POST",
+    ...(method === "POST"
+      ? { requestId: crypto.randomUUID(), retry: true }
+      : {}),
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 function setBusy(busy, label = "Saving changes…") {
@@ -324,9 +327,6 @@ function navigate() {
 }
 
 // ---- Loading.
-const merge = (list, items) => [
-  ...new Map([...list, ...items].map((p) => [p.id, p])).values(),
-];
 function rememberOwners(projects) {
   for (const p of projects) state.owners.set(ownerKeyOf(p), p.owner.trim());
 }
@@ -344,7 +344,13 @@ async function loadProjects(more = false) {
   const request = ++state.listRequest;
   const data = await api(projectsPath(more ? state.cursor : null));
   if (request !== state.listRequest) return;
-  state.projects = merge(more ? state.projects : [], data.projects);
+  // A project saved here can be newer than the copy in an eventual page.
+  state.projects = mergePage(
+    more ? state.projects : [],
+    data.projects,
+    [...state.projects, ...state.overview],
+    matchesFilters,
+  );
   state.cursor = data.cursor;
   state.hasMore = data.hasMore;
   rememberOwners(data.projects);
@@ -552,8 +558,13 @@ function edit(project) {
 $("new-project").addEventListener("click", () => edit());
 document.addEventListener("click", (e) => {
   const button = e.target.closest(".edit-project");
-  if (button && !state.busy)
-    edit(state.projects.find((p) => p.id === button.dataset.id));
+  if (!button || state.busy) return;
+  // The Overview table shows state.overview, which a filter does not change.
+  const id = button.dataset.id;
+  const project =
+    state.projects.find((p) => p.id === id) ||
+    state.overview.find((p) => p.id === id);
+  if (project) edit(project);
 });
 $("close-dialog").addEventListener("click", () => $("project-dialog").close());
 $("project-dialog").addEventListener("cancel", (e) => {
@@ -563,12 +574,10 @@ const matchesFilters = (p) =>
   (!state.filters.status || p.status === state.filters.status) &&
   (!state.filters.owner || ownerKeyOf(p) === state.filters.owner);
 // Show a saved project at once: the filtered lists are eventual on the edge.
+// The overview is unfiltered, so it always holds the saved project.
 function storeProject(project) {
-  const others = (list) => list.filter((p) => p.id !== project.id);
-  state.projects = matchesFilters(project)
-    ? [...others(state.projects), project]
-    : others(state.projects);
-  state.overview = [...others(state.overview), project];
+  state.projects = placeProject(state.projects, project, matchesFilters(project));
+  state.overview = placeProject(state.overview, project);
   rememberOwners([project]);
 }
 function forgetProject(id) {

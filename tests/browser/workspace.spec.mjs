@@ -508,3 +508,48 @@ test("a create that fails twice tells the person to reload and check", async ({
     "Never saved",
   );
 });
+
+test("the Overview Edit button opens a project that the Projects filter leaves out", async ({
+  page,
+}) => {
+  await signIn(page);
+  // A new project is planned, and the newest, so the Overview table shows it.
+  await createProject(page, "Overview edit");
+  await page.locator('[data-view="projects"]').click();
+  const status = page.getByRole("combobox", { name: "Filter by status" });
+  await status.selectOption("active");
+  await expect(page.locator("#projects-table tbody tr")).toHaveCount(4);
+  await expect(page.locator("#projects-table")).not.toContainText("Overview edit");
+  await page.locator('[data-view="overview"]').click();
+  await page
+    .locator("#overview-table")
+    .getByRole("button", { name: "Edit Overview edit", exact: true })
+    .click();
+  await expect(page.locator("#project-dialog")).toBeVisible();
+  await expect(page.locator("#dialog-title")).toHaveText("A little fine-tuning.");
+  await expect(page.getByLabel("Project name", { exact: true })).toHaveValue(
+    "Overview edit",
+  );
+  await expect(
+    page.getByRole("button", { name: "Delete project", exact: true }),
+  ).toBeVisible();
+  await page.locator("#project-description").fill("Edited from the overview");
+  await page.getByRole("button", { name: "Save project" }).click();
+  await expect(page.locator("#project-dialog")).not.toBeVisible();
+  await expect(page.locator("#notice")).toHaveText(
+    "Project updated. A little progress, made.",
+  );
+  await expect(page.locator("#overview-table")).toContainText(
+    "Edited from the overview",
+  );
+  // The saved project is still planned: it stays out of the active list.
+  await page.locator('[data-view="projects"]').click();
+  await expect(page.locator("#projects-table tbody tr")).toHaveCount(4);
+  await status.selectOption("all");
+  await expect(page.locator("#projects-table")).toContainText(
+    "Edited from the overview",
+  );
+  await expect(page.locator("#stat-total")).toHaveText("9");
+  await deleteProject(page, "Overview edit");
+  await expect(page.locator("#nav-count")).toHaveText("8");
+});
