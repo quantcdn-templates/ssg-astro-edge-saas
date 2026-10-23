@@ -51,7 +51,7 @@ jobs:
           rules: ${{ secrets.QUANT_API_TOKEN != '' && vars.QUANT_BASE_URL != '' && 'quant/edge-rules.json' || '' }}
           api-token: ${{ secrets.QUANT_API_TOKEN }}
           api-base-url: ${{ vars.QUANT_BASE_URL }}
-      - uses: quantcdn/purge-action@9bab37759d3cd137b5982706b20aad785a13b229 # v6.0.1
+      - uses: quantcdn/purge-action@5c2a85f5318917ef12b9099cf101fe6bd75d0d06 # v7.1.0
         if: env.DEPLOY_CONFIGURED == 'true'
         with:
           customer: ${{ vars.QUANT_CUSTOMER }}
