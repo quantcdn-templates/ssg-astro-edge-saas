@@ -261,13 +261,15 @@ try {
   }
   return json({ error: "Route not found." }, 404);
 } catch (error) {
-  if (!error.status) console.error("Orbit API request failed:", error.message);
+  // A KVError also has a status; it is never shown to the client.
+  const status = error.name === "KVError" ? undefined : error.status;
+  if (!status) console.error("Orbit API request failed:", error.message);
   return json(
     {
-      error: error.status
+      error: status
         ? error.message
         : "The workspace could not be reached. Please try again.",
     },
-    error.status || 503,
+    status || 503,
   );
 }
