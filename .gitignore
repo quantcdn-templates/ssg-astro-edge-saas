@@ -2,6 +2,7 @@ node_modules/
 dist/
 .astro/
 .local/
+.quant/
 .env*
 .quant-revision
 .DS_Store

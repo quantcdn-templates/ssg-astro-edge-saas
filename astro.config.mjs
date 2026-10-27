@@ -1,5 +1,4 @@
 import { defineConfig } from "astro/config";
-import { localEdge } from "./scripts/local-edge.mjs";
 export default defineConfig({
   devToolbar: { enabled: false },
   output: "static",
@@ -10,5 +9,4 @@ export default defineConfig({
     locales: ["en"],
     routing: { prefixDefaultLocale: false },
   },
-  integrations: [localEdge()],
 });

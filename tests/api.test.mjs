@@ -1,10 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { createKV, digest, indexesFromMeta, KVError } from "../scripts/kv.mjs";
-const indexes = await indexesFromMeta(
-  new URL("../quant/meta.json", import.meta.url).pathname,
-);
+import { createKV, digest, indexes, KVError } from "./kv-local.mjs";
 const source = await readFile(
   new URL("../quant/edge-functions/api.js", import.meta.url),
   "utf8",
@@ -29,7 +26,7 @@ const project = {
 };
 // declared: the indexes the store has (all of quant/meta.json by default).
 async function setup(declared = indexes) {
-  const kv = await createKV(undefined, { indexes: declared });
+  const kv = await createKV(store, declared);
   for (const [key, workspace, role] of [
     [ownerKey, "alpha", "owner"],
     [viewerKey, "alpha", "viewer"],
@@ -414,7 +411,7 @@ test("empty evaluated pages preserve pagination metadata", async () => {
 });
 
 test("uses Quant's public URL for origin checks behind the edge proxy", async () => {
-  const kv = await createKV(undefined, { indexes });
+  const kv = await createKV(store);
   await kv.set(store, `auth:${digest(ownerKey)}`, {
     name: "Alex", workspace: "alpha", role: "owner", active: true,
   });
@@ -759,8 +756,11 @@ test("activity is newest first, pages with a cursor and records each change", as
   assert.equal(entries[1].project.progress, 80);
   const key = `workspace:alpha:activity:${entries[0].id}`;
   const entry = await o.kv.getEntry(store, key);
-  // The test clock moves 1 s on each read, so allow a few seconds.
-  const ttl = entry.expiresAt - Math.floor(Date.parse(entries[0].at) / 1000);
+  // expiresAt is epoch milliseconds or ISO 8601 text. The test clock moves
+  // 1 s on each read, so allow a few seconds.
+  const expires =
+    typeof entry.expiresAt === "number" ? entry.expiresAt : Date.parse(entry.expiresAt);
+  const ttl = Math.round((expires - Date.parse(entries[0].at)) / 1000);
   assert.ok(Math.abs(ttl - 90 * 86400) <= 60, `ttl ${ttl}`);
   // 53 more changes: 50 a page, newest first, then the rest.
   await withClock(async () => {
@@ -902,6 +902,15 @@ test("text fields refuse control characters other than tab and newline", async (
 const dataModelCopy = "The workspace data model is not set up. See README › Data model.";
 test("a store without the declared indexes gives the data model message, never the KV message", async () => {
   const o = await orbit([]);
+  // The platform refuses an index read on an undeclared index with
+  // VALIDATION "No index named <name>".
+  for (const method of ["list", "count"]) {
+    const original = o.kv[method];
+    o.kv[method] = async (s, options = {}) => {
+      if (options.index) throw new KVError("VALIDATION", `No index named ${options.index}`);
+      return original(s, options);
+    };
+  }
   assert.equal((await o.create()).res.status, 201);
   // The unfiltered list and activity are collection lists: they need no index.
   assert.equal((await o.get("/projects")).body.projects.length, 1);

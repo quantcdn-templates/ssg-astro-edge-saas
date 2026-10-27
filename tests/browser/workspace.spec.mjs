@@ -1,8 +1,9 @@
 import { test, expect } from "@playwright/test";
 
-// These tests expect a freshly seeded local store (delete .local/kv.json
-// before `npm run dev`): eight projects, four active, two planned and two
-// complete. Each test removes what it creates.
+// These tests expect a freshly seeded local store: the Playwright web server
+// runs `quant serve --memory` with the fixtures in quant/kv-fixtures/ (eight
+// projects, four active, two planned and two complete). Each test removes
+// what it creates.
 const shot = (page, name) =>
   page.screenshot({
     path: `.local/screenshots/${name}.png`,
@@ -14,10 +15,16 @@ const phone = { width: 390, height: 844 };
 const conflictCopy =
   "Someone else changed this project. Reload it to see their change.";
 const duplicateCopy = "A project with this name already exists.";
+// The owner key that the web server seeds with --seed-key.
+const accessKey = "0123456789abcdef".repeat(4);
+async function enterKey(page) {
+  await page.getByLabel("Access key", { exact: true }).fill(accessKey);
+  await page.getByRole("button", { name: "Open workspace" }).click();
+}
 async function signIn(page, size = desktop) {
   await page.setViewportSize(size);
   await page.goto("/app");
-  await page.getByRole("button", { name: "Enter demo workspace" }).click();
+  await enterKey(page);
   await expect(page.locator("#loading")).toBeHidden();
   await expect(page.locator("#stat-total")).toHaveText("8");
 }
@@ -475,7 +482,7 @@ test("a failed read shows the connection copy, not the may-have-been-saved copy"
   await page.goto("/app");
   await expect(page.locator("#login-error")).toHaveText(offline);
   await page.unroute("**/api/session");
-  await page.getByRole("button", { name: "Enter demo workspace" }).click();
+  await enterKey(page);
   await expect(page.locator("#stat-total")).toHaveText("8");
   // A filter change: the list read fails.
   await page.route(/\/api\/projects\?status=/, (route) => route.abort("failed"));

@@ -49,6 +49,9 @@ jobs:
           # Managed rules (quant/edge-rules.json) deploy only when the portal injected the
           # separate project-scoped rules token; a manual setup without it is unchanged.
           rules: ${{ secrets.QUANT_API_TOKEN != '' && vars.QUANT_BASE_URL != '' && 'quant/edge-rules.json' || '' }}
+          # The KV indexes in quant/meta.json are declared with the same token. Without it,
+          # the dashboard setup and Studio publish declare them.
+          kv-indexes: ${{ secrets.QUANT_API_TOKEN != '' && vars.QUANT_BASE_URL != '' && 'quant/meta.json' || '' }}
           api-token: ${{ secrets.QUANT_API_TOKEN }}
           api-base-url: ${{ vars.QUANT_BASE_URL }}
       - uses: quantcdn/purge-action@5c2a85f5318917ef12b9099cf101fe6bd75d0d06 # v7.1.0

@@ -1,0 +1,210 @@
+[
+  {
+    "key": "workspace:studio:project:00000000000000000000000000000001",
+    "value": {
+      "id": "00000000000000000000000000000001",
+      "name": "Website refresh",
+      "description": "A thoughtful new home for our brand.",
+      "owner": "Alex Morgan",
+      "status": "active",
+      "priority": "high",
+      "progress": 72,
+      "due": {
+        "$date": "+6d",
+        "format": "date"
+      },
+      "createdAt": {
+        "$date": "-14d"
+      },
+      "updatedAt": {
+        "$date": "now"
+      },
+      "updatedBy": "Alex Morgan",
+      "workspace": "studio",
+      "nameKey": "website refresh",
+      "ownerKey": "alex morgan"
+    }
+  },
+  {
+    "key": "workspace:studio:project:00000000000000000000000000000002",
+    "value": {
+      "id": "00000000000000000000000000000002",
+      "name": "Customer onboarding",
+      "description": "Make every first impression count.",
+      "owner": "Jamie Chen",
+      "status": "active",
+      "priority": "high",
+      "progress": 48,
+      "due": {
+        "$date": "+12d",
+        "format": "date"
+      },
+      "createdAt": {
+        "$date": "-14d"
+      },
+      "updatedAt": {
+        "$date": "-1h"
+      },
+      "updatedBy": "Jamie Chen",
+      "workspace": "studio",
+      "nameKey": "customer onboarding",
+      "ownerKey": "jamie chen"
+    }
+  },
+  {
+    "key": "workspace:studio:project:00000000000000000000000000000003",
+    "value": {
+      "id": "00000000000000000000000000000003",
+      "name": "Autumn campaign",
+      "description": "Bring our next collection into the world.",
+      "owner": "Sam Rivera",
+      "status": "active",
+      "priority": "medium",
+      "progress": 85,
+      "due": {
+        "$date": "+3d",
+        "format": "date"
+      },
+      "createdAt": {
+        "$date": "-14d"
+      },
+      "updatedAt": {
+        "$date": "-2h"
+      },
+      "updatedBy": "Sam Rivera",
+      "workspace": "studio",
+      "nameKey": "autumn campaign",
+      "ownerKey": "sam rivera"
+    }
+  },
+  {
+    "key": "workspace:studio:project:00000000000000000000000000000004",
+    "value": {
+      "id": "00000000000000000000000000000004",
+      "name": "Design system",
+      "description": "One shared language for everything we build.",
+      "owner": "Alex Morgan",
+      "status": "active",
+      "priority": "medium",
+      "progress": 36,
+      "due": {
+        "$date": "+18d",
+        "format": "date"
+      },
+      "createdAt": {
+        "$date": "-14d"
+      },
+      "updatedAt": {
+        "$date": "-3h"
+      },
+      "updatedBy": "Alex Morgan",
+      "workspace": "studio",
+      "nameKey": "design system",
+      "ownerKey": "alex morgan"
+    }
+  },
+  {
+    "key": "workspace:studio:project:00000000000000000000000000000005",
+    "value": {
+      "id": "00000000000000000000000000000005",
+      "name": "Mobile experience",
+      "description": "Explore a simpler way to work on the go.",
+      "owner": "Taylor Brooks",
+      "status": "planned",
+      "priority": "medium",
+      "progress": 10,
+      "due": {
+        "$date": "+30d",
+        "format": "date"
+      },
+      "createdAt": {
+        "$date": "-14d"
+      },
+      "updatedAt": {
+        "$date": "-4h"
+      },
+      "updatedBy": "Taylor Brooks",
+      "workspace": "studio",
+      "nameKey": "mobile experience",
+      "ownerKey": "taylor brooks"
+    }
+  },
+  {
+    "key": "workspace:studio:project:00000000000000000000000000000006",
+    "value": {
+      "id": "00000000000000000000000000000006",
+      "name": "Customer interviews",
+      "description": "Listen closely. Learn something new.",
+      "owner": "Jamie Chen",
+      "status": "complete",
+      "priority": "low",
+      "progress": 100,
+      "due": {
+        "$date": "-2d",
+        "format": "date"
+      },
+      "createdAt": {
+        "$date": "-14d"
+      },
+      "updatedAt": {
+        "$date": "-5h"
+      },
+      "updatedBy": "Jamie Chen",
+      "workspace": "studio",
+      "nameKey": "customer interviews",
+      "ownerKey": "jamie chen"
+    }
+  },
+  {
+    "key": "workspace:studio:project:00000000000000000000000000000007",
+    "value": {
+      "id": "00000000000000000000000000000007",
+      "name": "Brand guidelines",
+      "description": "The details that make us, us.",
+      "owner": "Sam Rivera",
+      "status": "complete",
+      "priority": "medium",
+      "progress": 100,
+      "due": {
+        "$date": "-5d",
+        "format": "date"
+      },
+      "createdAt": {
+        "$date": "-14d"
+      },
+      "updatedAt": {
+        "$date": "-6h"
+      },
+      "updatedBy": "Sam Rivera",
+      "workspace": "studio",
+      "nameKey": "brand guidelines",
+      "ownerKey": "sam rivera"
+    }
+  },
+  {
+    "key": "workspace:studio:project:00000000000000000000000000000008",
+    "value": {
+      "id": "00000000000000000000000000000008",
+      "name": "Partner programme",
+      "description": "Make room for new possibilities.",
+      "owner": "Taylor Brooks",
+      "status": "planned",
+      "priority": "low",
+      "progress": 0,
+      "due": {
+        "$date": "+40d",
+        "format": "date"
+      },
+      "createdAt": {
+        "$date": "-14d"
+      },
+      "updatedAt": {
+        "$date": "-7h"
+      },
+      "updatedBy": "Taylor Brooks",
+      "workspace": "studio",
+      "nameKey": "partner programme",
+      "ownerKey": "taylor brooks"
+    }
+  }
+]

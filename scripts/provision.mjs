@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
-import { digest } from "./kv.mjs";
+import { createHash, randomBytes } from "node:crypto";
+const digest = (value) => createHash("sha256").update(value).digest("hex");
 const [workspace, name, role = "owner"] = process.argv.slice(2);
 if (
   !/^[a-z0-9][a-z0-9-]{0,47}$/.test(workspace || "") ||
