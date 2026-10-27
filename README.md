@@ -248,8 +248,7 @@ Orbit itself performs authentication inside its API function.
 
 Portal-issued
 template API tokens expire after one year; rotate the token and replace the
-GitHub secret before expiry. A token issued by a local portal database cannot
-be used against the shared staging portal.
+GitHub secret before expiry.
 
 ### Template KV declarations
 
@@ -356,4 +355,4 @@ The browser tests start `quant serve` on `dist/` at port 4321, with the KV data 
 
 The workflow runs API tests and a production build on pushes to `main`, pull requests, and manual runs. Deployment runs only when the Quant variables and token are configured, and is skipped for pull requests or commits containing `[skip deploy]`. Browser tests are a local verification step. Fonts are loaded from Google Fonts with system fallbacks; self-host them if needed.
 
-References: [Quant edge functions](https://docs.quantcdn.io/compute/functions), [KV stores](https://docs.quantcdn.io/compute/kv-stores/), [deploy action](https://github.com/quantcdn/deploy-action). The local `mc-ai/site` examples informed the function-body and deployment conventions; KV v2 indexes replace their best-effort shared index.
+References: [Quant edge functions](https://docs.quantcdn.io/compute/functions), [KV stores](https://docs.quantcdn.io/compute/kv-stores/), [deploy action](https://github.com/quantcdn/deploy-action).
