@@ -37,7 +37,7 @@ jobs:
           path: .quant-revision
           key: quant-revision-${{ github.ref }}-${{ github.run_id }}
           restore-keys: quant-revision-${{ github.ref }}-
-      - uses: quantcdn/deploy-action@9bf8cae8497ab6628d4b248db9eb11464f37e1e5 # v7.0.1
+      - uses: quantcdn/deploy-action@6cf613c57b49d8c47e34d6f3e54469e48af2f1a8 # v7.1.0
         if: env.DEPLOY_CONFIGURED == 'true'
         with:
           customer: ${{ vars.QUANT_CUSTOMER }}
