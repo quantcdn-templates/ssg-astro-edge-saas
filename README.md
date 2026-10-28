@@ -17,11 +17,13 @@ npm install
 npm run dev
 ```
 
-Open the URL Astro prints and visit `/app`. Choose **Enter demo workspace** to explore eight sample projects. Create, edit, complete and delete projects, filter the list by status and owner, review the activity feed and change workspace settings. Reloading preserves your changes.
+`npm run dev` starts the Astro dev server behind [`quant serve`](https://github.com/quantcdn/quant-cli#run-a-site-locally), which runs **the same `quant/edge-functions/api.js` body** as production, applies `quant/edge-rules.json` and gives the function a local KV store. Open `http://127.0.0.1:8787/app` and choose **Enter demo workspace** to explore eight sample projects. Create, edit, complete and delete projects, filter the list by status and owner, review the activity feed and change workspace settings. Reloading preserves your changes.
 
-The local Astro integration executes **the same `quant/edge-functions/api.js` body** as production. Its filesystem KV adapter persists records in `.local/kv.json`, which is ignored by Git. It seeds only on the first run. Stop the dev server and remove that file to reset the demo. The adapter reads the indexes from `quant/meta.json` and emulates the KV v2 contract that Orbit uses (see [Local emulator limits](#local-emulator-limits)), not the hosted service's latency or failure modes.
+`npm run serve` builds the production site and serves `dist/` the same way, at the same address. The production build has no demo button: sign in with the demo key `0123456789abcdef` repeated four times.
 
-`npm run preview` serves only the static production build; it does not start the development API. Use `npm run dev` for the complete local application. Demo credentials and the demo button are development-only and are absent from the production bundle. Production setup seeds workspace settings from `quant/meta.json`; it never seeds the local demo credentials or projects.
+The demo key exists only in local state. `quant serve` makes the store from `quant/meta.json`, with its indexes and initial values, and gives the owner access key the demo value (`--seed-key`). It then adds the sample projects from `quant/kv-fixtures/orbit.json`. The data is in `.quant/`, which Git ignores. It is seeded only on the first run: add `-- --reset` to either command to start again. `quant kv list orbit --local` shows the local records. Production setup seeds workspace settings and a new owner key from `quant/meta.json`; it never uses the demo key or the fixtures.
+
+`npm run preview` serves only the static production build, without the API. Use `npm run dev` or `npm run serve` for the complete local application.
 
 ## What is included
 
@@ -31,7 +33,7 @@ The local Astro integration executes **the same `quant/edge-functions/api.js` bo
 - Opaque eight-hour sessions in HttpOnly, Secure, SameSite=Strict cookies over HTTPS. Sessions are stored by hash, expire both in application code and through KV TTL, and are removed on sign-out.
 - Workspace settings and an activity feed: one entry for each create, update and delete, kept for 90 days.
 - Public landing page and field guide backed by typed Astro content collections.
-- An API test suite, browser tests, local emulator, provisioning helper and GitHub deployment workflow.
+- An API test suite, browser tests, local KV fixtures for `quant serve`, a provisioning helper and a GitHub deployment workflow.
 
 Owner labels on projects are descriptive names, not account assignments or invitations. Activity entries are written in the same transaction as the change, but they expire after 90 days and are not an immutable audit log. Billing, email, self-service registration and password recovery are extension points, not simulated features.
 
@@ -87,9 +89,11 @@ Keys whose text before the last `:` is the same form one **collection**. `worksp
 
 `nameKey` and `ownerKey` are the name and the owner, trimmed and lower-cased. "Website" and "website " are then the same name, and the owner filter ignores case. The API writes these fields; the browser cannot set them. An activity `<id>` is the change time in milliseconds (13 digits), then `-` and 8 hex characters, so key order is time order.
 
+`quant/kv-fixtures/orbit.json` holds the local sample projects, with dates relative to the first run. Only `quant serve` reads it. Delete `quant/kv-fixtures/` to start with an empty workspace.
+
 ### The `kv_stores` declaration
 
-`quant/meta.json` declares the store, its indexes and its initial values. Only two things read the `indexes` field: portal setup, which creates each index before it seeds the store, and a Quant Studio publish, which adds an index that is declared but missing. A GitHub deploy does not declare indexes. For a store set up any other way, see [Manual setup](#manual-setup).
+`quant/meta.json` declares the store, its indexes and its initial values. The KV indexes come from portal setup, which creates each index before it seeds the store, and from a Quant Studio publish, which adds an index that is declared but missing. The deploy workflow also declares a missing index when the repository has the `QUANT_API_TOKEN` secret and the `QUANT_BASE_URL` variable (the `kv-indexes` input of the deploy step). If that token has no KV scope, the step prints a warning and declares nothing, so the setup and Studio publish stay the paths that declare the indexes. For a store set up any other way, see [Manual setup](#manual-setup). Locally, `quant serve` reads the same declaration.
 
 ```json
 "kv_stores": [
@@ -189,14 +193,9 @@ Never change the definition of an existing index. To change one, add a new index
 
 There is no data migration step. An index includes only the records that have its fields. A project written before an index existed, or before the API wrote its fields, is in the unfiltered list but not in the filters or the counts. It joins the indexes on its next edit. If you add a field that an index needs, write it on every save, and edit the older records (or write a one-off script) if they must appear at once.
 
-### Local emulator limits
+### Local limits
 
-`scripts/kv.mjs` emulates the KV v2 calls above from the declaration in `quant/meta.json`, so a change to the indexes takes effect locally on the next `npm run dev`. It does not model:
-
-- index build states (an index is ready at once, so `INDEX_NOT_READY` never occurs locally);
-- the eventual lag of index lists (every local read is strong).
-
-Test index lag, build states and retries on a staging site.
+`quant serve` reads the indexes from `quant/meta.json` when it makes the store. After you change an index, run `npm run dev -- --reset` to make the local store again. Locally an index is ready at once and index lists have no lag. To see the other states, use `--indexes building` (the API then gives the not-ready message) and `--kv-lag 500`. For what `quant serve` does not emulate, see the quant-cli README, [What quant serve does not emulate](https://github.com/quantcdn/quant-cli#what-quant-serve-does-not-emulate). Test retries and production limits on a staging site.
 
 ## Deploy to Quant
 
@@ -249,8 +248,7 @@ Orbit itself performs authentication inside its API function.
 
 Portal-issued
 template API tokens expire after one year; rotate the token and replace the
-GitHub secret before expiry. A token issued by a local portal database cannot
-be used against the shared staging portal.
+GitHub secret before expiry.
 
 ### Template KV declarations
 
@@ -340,8 +338,7 @@ Studio edits public web content. It is not the editor for KV project records, pr
 | `src/scripts/app.js`           | API client, rendering and interaction        |
 | `src/styles/global.css`        | Public and dashboard styling                 |
 | `src/content.config.ts`        | Studio content schema                        |
-| `scripts/local-edge.mjs`       | Development bridge to the same edge function |
-| `scripts/kv.mjs`               | Persistent development KV adapter            |
+| `quant/kv-fixtures/orbit.json` | Local sample projects for `quant serve`      |
 | `scripts/provision.mjs`        | Generates personal access records            |
 | `.github/workflows/deploy.yml` | Tests, build, function/static deployment     |
 
@@ -350,14 +347,12 @@ Studio edits public web content. It is not the editor for KV project records, pr
 ```sh
 npm test
 npm run build
-
-# With npm run dev running in another terminal:
 npx playwright install chromium
-BASE_URL=http://localhost:4321 npm run test:browser
+npm run test:browser
 ```
 
-Set `BASE_URL` to the actual development URL printed by Astro. Browser tests expect a freshly seeded local store with eight projects (stop the dev server and delete `.local/kv.json` first) and delete the projects they create. The activity entries that they write stay in the local store for 90 days, so the activity feed grows with each run. They cover desktop and phone layouts, authentication, persisted CRUD, server filters by status and owner, summary counts, the activity feed, a two-person edit conflict, a duplicate name, settings conflicts, the create retry, HTML escaping and failed-save recovery. Screenshots go to `.local/screenshots/`. API tests cover isolation, roles, expiry/revocation, CSRF origin checks, validation, pagination, version conflicts, unique names, create retries, indexes, counts, activity and storage failures.
+The browser tests start `quant serve` on `dist/` at port 4321, with the KV data in memory, so each run starts from a fresh store with eight projects. They sign in with the demo key and delete the projects they create. If a server already listens on port 4321, the tests use it; it must be a freshly seeded `quant serve` of the production build. They cover desktop and phone layouts, authentication, persisted CRUD, server filters by status and owner, summary counts, the activity feed, a two-person edit conflict, a duplicate name, settings conflicts, the create retry, HTML escaping and failed-save recovery. Screenshots go to `.local/screenshots/`. API tests run the function body against a local KV from `@quantcdn/edge-kv`. They cover isolation, roles, expiry/revocation, CSRF origin checks, validation, pagination, version conflicts, unique names, create retries, indexes, counts, activity and storage failures.
 
 The workflow runs API tests and a production build on pushes to `main`, pull requests, and manual runs. Deployment runs only when the Quant variables and token are configured, and is skipped for pull requests or commits containing `[skip deploy]`. Browser tests are a local verification step. Fonts are loaded from Google Fonts with system fallbacks; self-host them if needed.
 
-References: [Quant edge functions](https://docs.quantcdn.io/compute/functions), [KV stores](https://docs.quantcdn.io/compute/kv-stores/), [deploy action](https://github.com/quantcdn/deploy-action). The local `mc-ai/site` examples informed the function-body and deployment conventions; KV v2 indexes replace their best-effort shared index.
+References: [Quant edge functions](https://docs.quantcdn.io/compute/functions), [KV stores](https://docs.quantcdn.io/compute/kv-stores/), [deploy action](https://github.com/quantcdn/deploy-action).

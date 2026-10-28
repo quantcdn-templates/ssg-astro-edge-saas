@@ -8,7 +8,8 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "astro dev",
+    "dev": "quant serve --run 'astro dev --host 127.0.0.1 --port 4321' --proxy http://127.0.0.1:4321 --seed-key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "serve": "quant serve dist --build 'npm run build' --seed-key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "build": "astro build",
     "preview": "astro preview",
     "test": "node --test tests/*.test.mjs",
@@ -19,6 +20,8 @@
     "astro": "7.3.2"
   },
   "devDependencies": {
-    "@playwright/test": "^1.63.0"
+    "@playwright/test": "^1.63.0",
+    "@quantcdn/edge-kv": "0.1.0",
+    "@quantcdn/quant-cli": "7.1.1"
   }
 }

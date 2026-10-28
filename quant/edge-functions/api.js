@@ -4,8 +4,7 @@
 // stored is conditional, and a project change and its activity entry commit
 // in one transaction. The indexes are declared in quant/meta.json.
 const request = event.request;
-// Keep the original request path: Quant may rewrite event.url to /fn/<uuid>.
-// Its host/protocol identify the public origin rather than the internal backend.
+// Keep the original request path; take the public host and protocol from event.url.
 const url = new URL(request.url);
 if (event.url) {
   const publicUrl = new URL(event.url);
