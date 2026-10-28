@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
-    "@quantcdn/edge-kv": "0.1.0-rc.1",
+    "@quantcdn/edge-kv": "0.1.0-rc.2",
     "@quantcdn/quant-cli": "file:../quant-cli-wt-serve"
   }
 }

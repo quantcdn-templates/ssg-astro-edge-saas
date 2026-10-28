@@ -901,16 +901,9 @@ test("text fields refuse control characters other than tab and newline", async (
 
 const dataModelCopy = "The workspace data model is not set up. See README › Data model.";
 test("a store without the declared indexes gives the data model message, never the KV message", async () => {
+  // No indexes are declared. The platform (and @quantcdn/edge-kv) refuses an
+  // index read with VALIDATION "No index named <name>".
   const o = await orbit([]);
-  // The platform refuses an index read on an undeclared index with
-  // VALIDATION "No index named <name>".
-  for (const method of ["list", "count"]) {
-    const original = o.kv[method];
-    o.kv[method] = async (s, options = {}) => {
-      if (options.index) throw new KVError("VALIDATION", `No index named ${options.index}`);
-      return original(s, options);
-    };
-  }
   assert.equal((await o.create()).res.status, 201);
   // The unfiltered list and activity are collection lists: they need no index.
   assert.equal((await o.get("/projects")).body.projects.length, 1);
