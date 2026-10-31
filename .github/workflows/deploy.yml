@@ -37,7 +37,7 @@ jobs:
           path: .quant-revision
           key: quant-revision-${{ github.ref }}-${{ github.run_id }}
           restore-keys: quant-revision-${{ github.ref }}-
-      - uses: quantcdn/deploy-action@6cf613c57b49d8c47e34d6f3e54469e48af2f1a8 # v7.1.0
+      - uses: quantcdn/deploy-action@d6d776177f9fbdf781a7d09c071185a9e509fcc3 # v7.1.1
         if: env.DEPLOY_CONFIGURED == 'true'
         with:
           customer: ${{ vars.QUANT_CUSTOMER }}
@@ -54,7 +54,7 @@ jobs:
           kv-indexes: ${{ secrets.QUANT_API_TOKEN != '' && vars.QUANT_BASE_URL != '' && 'quant/meta.json' || '' }}
           api-token: ${{ secrets.QUANT_API_TOKEN }}
           api-base-url: ${{ vars.QUANT_BASE_URL }}
-      - uses: quantcdn/purge-action@5c2a85f5318917ef12b9099cf101fe6bd75d0d06 # v7.1.0
+      - uses: quantcdn/purge-action@540559574168b65a2310781a1656b06f45e01a71 # v7.1.1
         if: env.DEPLOY_CONFIGURED == 'true'
         with:
           customer: ${{ vars.QUANT_CUSTOMER }}
