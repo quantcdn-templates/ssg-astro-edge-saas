@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && vars.QUANT_RUNS_ON_X64 && fromJSON(vars.QUANT_RUNS_ON_X64) || 'ubuntu-latest' }}
     env:
       DEPLOY_CONFIGURED: ${{ github.event_name != 'pull_request' && vars.QUANT_CUSTOMER != '' && vars.QUANT_PROJECT != '' && secrets.QUANT_TOKEN != '' && !contains(github.event.head_commit.message, '[skip deploy]') }}
     steps:
